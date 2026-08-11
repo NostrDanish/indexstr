@@ -27,6 +27,8 @@ Eight curated link packs ship inside the app as SQLite databases, parsed locally
 
 Databases download on demand (only the collection you load), parse in a couple of seconds, and the extracted URL list is cached in IndexedDB — reloading a collection later is instant. Collection URLs are indexed **exactly as listed** (`followLinks: false`): the collection IS the crawl plan.
 
+The databases ship in `public/collections/` **and** are mirrored as content-addressed [Blossom](https://github.com/hzrd149/blossom) blobs (`blossom.primal.net/<sha256>`). The loader tries the local file first, then Blossom, then Blossom via CORS proxy — downloaded bytes are always verified against their SHA-256 (the Blossom blob id), so any transport is safe. Hosts that can't serve large static binaries (some dev sandboxes) transparently fall back to Blossom.
+
 ---
 
 ## How It Works
@@ -182,16 +184,17 @@ Full schema documentation: [NIP.md](NIP.md) · Canonical spec: [SIP-01 v1.1](htt
 
 Observations are published to:
 
-- `wss://relay-na1.metanomalist.com/`
-- `wss://relay.ditto.pub/` (NIP-50 search)
-- `wss://jskitty.cat/nostr`
-- `wss://search.nos.today/` (NIP-50 search)
-- `wss://relay.primal.net/`
-- `wss://nostr.hifish.org/`
 - `wss://relay.nostr.band/` (NIP-50 search)
+- `wss://relay.ditto.pub/` (NIP-50 search)
 - `wss://relay.noswhere.com/` (NIP-50 search)
+- `wss://relay-na1.metanomalist.com/`
+- `wss://jskitty.cat/nostr`
+- `wss://relay.primal.net/`
 - `wss://relay.damus.io/`
+- `wss://nostr.hifish.org/`
 - `ws://acuy3mjnv26tkyaaucndlxmg2ocntz4rtebhavk57vgruozm42iaznqd.onion/` (Tor only — reachable from Tor Browser; clearnet browsers skip it)
+
+(`wss://search.nos.today/` is read-only — "blocked: writes disabled" — so it is not in the publish set.)
 
 Each observation is pushed to every relay in the set via targeted per-relay connections.
 

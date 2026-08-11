@@ -19,14 +19,20 @@ export const SEARCH_RELAYS = [
 ];
 
 /**
- * Extra relays that index observations are published to, beyond the
- * search pool, so observations propagate widely.
+ * Relays that index observations are published to. NIP-50 search relays that
+ * accept writes come first (so the Web Index provider sees fresh observations
+ * immediately), then general write relays so they replicate widely.
+ *
+ * Note: wss://search.nos.today/ is deliberately absent — it answers every
+ * write with "blocked: writes disabled". It stays in SEARCH_RELAYS (reading)
+ * but can never accept an observation.
  */
 export const INDEX_WRITE_RELAYS = [
-  'wss://relay-na1.metanomalist.com/',
+  'wss://relay.nostr.band/',
   'wss://relay.ditto.pub/',
+  'wss://relay.noswhere.com/',
+  'wss://relay-na1.metanomalist.com/',
   'wss://jskitty.cat/nostr',
-  'wss://search.nos.today/',
   'wss://relay.primal.net/',
   'wss://relay.damus.io/',
   'wss://nostr.hifish.org/',
@@ -38,18 +44,9 @@ export const INDEX_WRITE_RELAYS = [
 ];
 
 /**
- * Relays that index observations are published to: the search pool first
- * (so the Web Index provider sees fresh observations immediately), then the
- * write relays (so they replicate across the network). Deduped.
+ * Relays that index observations are published to. Indexstr is a pure
+ * publisher, so this is exactly the write set (deduped).
  */
 export function getIndexPublishRelays(): string[] {
-  const seen = new Set<string>();
-  const pool: string[] = [];
-  for (const url of [...SEARCH_RELAYS, ...INDEX_WRITE_RELAYS]) {
-    if (!seen.has(url)) {
-      seen.add(url);
-      pool.push(url);
-    }
-  }
-  return pool;
+  return [...new Set(INDEX_WRITE_RELAYS)];
 }

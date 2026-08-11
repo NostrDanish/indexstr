@@ -1,27 +1,40 @@
 /**
  * Curated URL collections — the reason Indexstr exists.
  *
- * Each collection ships as a raw SQLite database in /public/collections and
- * holds a `linkdatamodel` table (scraped links with titles) plus a
- * `sourcedatamodel` table (categorized source sites/feeds). The loader
- * fetches the database on demand, scans both tables with the minimal SQLite
- * reader (sqlite.ts), normalizes every URL per SIP-01 §7, dedupes, and
- * returns a clean seed list for the crawl queue.
+ * Each collection is a raw SQLite database holding a `linkdatamodel` table
+ * (scraped links with titles) plus a `sourcedatamodel` table (categorized
+ * source sites/feeds). The loader fetches the database on demand, scans both
+ * tables with the minimal SQLite reader (sqlite.ts), normalizes every URL
+ * per SIP-01 §7, dedupes, and returns a clean seed list for the crawl queue.
  *
- * Databases are parsed once and the extracted URL list is cached in
- * IndexedDB, so reloading a collection later is instant.
+ * Sources, tried in order (first bytes that pass integrity checks win):
+ *   1. /collections/<id>.db — same-origin static file (works when deployed;
+ *      some dev/preview sandboxes can't serve large binaries)
+ *   2. Blossom (content-addressed: blossom.primal.net/<sha256>)
+ *   3. The same Blossom blob via the Shakespeare CORS proxy, for networks
+ *      that block direct access
+ *
+ * Blossom blobs are addressed by sha256 and the downloaded bytes are hashed
+ * and compared, so any transport is safe. Databases are parsed once and the
+ * extracted URL list is cached in IndexedDB — reloading is instant.
  */
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import { SqliteReader } from './sqlite';
 import { normalizeIndexUrl } from './webIndex';
 
+/** Blossom server hosting the collection blobs (uploaded at build time). */
+const BLOSSOM_SERVER = 'https://blossom.primal.net';
+
+/** CORS proxy used as a last-resort transport for the Blossom blob. */
+const CORS_PROXY = 'https://proxy.shakespeare.diy/?url=';
+
 /* ------------------------------------------------------------------------ */
 /* Registry                                                                  */
 /* ------------------------------------------------------------------------ */
 
 export interface UrlCollection {
-  /** Stable id — also the file name: /public/collections/<id>.db */
+  /** Stable id — also the local file name: /collections/<id>.db */
   id: string;
   name: string;
   description: string;
@@ -29,6 +42,8 @@ export interface UrlCollection {
   icon: string;
   /** File size in bytes (shown before first load). */
   sizeBytes: number;
+  /** SHA-256 of the database file — the Blossom blob id and integrity check. */
+  sha256: string;
 }
 
 export const COLLECTIONS: UrlCollection[] = [
@@ -38,6 +53,7 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'High-traffic websites, news aggregators and community threads.',
     icon: 'trophy',
     sizeBytes: 26099712,
+    sha256: 'c3f08efa2648519f243b80b7438b2be30fac9c7988294adfde7e81e2e10b1f8e',
   },
   {
     id: 'awesomelists',
@@ -45,6 +61,7 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'Curated awesome-* lists — the best tools and resources per topic.',
     icon: 'list-checks',
     sizeBytes: 20488192,
+    sha256: '8de8953df9e129beb446d775e600dbe24861b40512d2c4c6ff1ca188323d5eb6',
   },
   {
     id: 'feeds',
@@ -52,6 +69,7 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'RSS and Atom feeds across tech, science, news and culture.',
     icon: 'rss',
     sizeBytes: 18808832,
+    sha256: 'afd1be7b2acc2757c1ef60c90fcb9c65c0ad18c28429a243f52bfe04351f0514',
   },
   {
     id: 'music',
@@ -59,6 +77,7 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'Artists, labels, streaming pages and music communities.',
     icon: 'music',
     sizeBytes: 10416128,
+    sha256: '2a5628fa59315d02e3b146430af9ab03321bd0238fcb0391ec87c2ed1e7d3800',
   },
   {
     id: 'books',
@@ -66,6 +85,7 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'Digital libraries, book search engines and reading platforms.',
     icon: 'book-open',
     sizeBytes: 1327104,
+    sha256: '5bab5609960bbdebeb68dce4b07e6aef881550d1e01c93c6906d3f0e4cbcd87c',
   },
   {
     id: 'movies',
@@ -73,6 +93,7 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'Film databases, streaming indexes and cinema resources.',
     icon: 'clapperboard',
     sizeBytes: 1204224,
+    sha256: '2ee719d71b42cc39cfa1f7958f440f10114bfbf2e6d0243c9b8bad96287ff577',
   },
   {
     id: 'memes',
@@ -80,6 +101,7 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'Meme archives, humor sites and internet culture pages.',
     icon: 'laugh',
     sizeBytes: 1052672,
+    sha256: 'c233f7b99541b4b647d7e092ef92cc77e0b820e6515ca0ce66acddbcabb2fb8e',
   },
   {
     id: 'videogames',
@@ -87,8 +109,19 @@ export const COLLECTIONS: UrlCollection[] = [
     description: 'Game databases, stores, mods and gaming communities.',
     icon: 'gamepad-2',
     sizeBytes: 884736,
+    sha256: '832b46a3449a015caba5e84e49e19eed71d7de9029640b3d00d3d396385d6c20',
   },
 ];
+
+/** Ordered download sources for a collection database. */
+function collectionSources(collection: UrlCollection): string[] {
+  const blossom = `${BLOSSOM_SERVER}/${collection.sha256}`;
+  return [
+    `/collections/${collection.id}.db`,
+    blossom,
+    `${CORS_PROXY}${encodeURIComponent(blossom)}`,
+  ];
+}
 
 /* ------------------------------------------------------------------------ */
 /* Types + progress                                                          */
@@ -158,6 +191,56 @@ export async function getCachedCollection(id: string): Promise<CollectionEntries
 /* Loader                                                                    */
 /* ------------------------------------------------------------------------ */
 
+/** Download one database file, reporting byte progress. */
+async function fetchDatabase(
+  collection: UrlCollection,
+  url: string,
+  onProgress?: (progress: LoadProgress) => void,
+): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status} for ${collection.id}.db`);
+
+  const total = Number(response.headers.get('content-length')) || collection.sizeBytes;
+  if (!response.body) return response.arrayBuffer();
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress?.({ stage: 'downloading', loaded, total });
+  }
+  const merged = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged.buffer;
+}
+
+const SQLITE_MAGIC = 'SQLite format 3';
+
+/**
+ * Reject anything that isn't byte-for-byte the expected database:
+ * checks the SQLite magic first (cheap), then the full SHA-256 — the
+ * Blossom blob id — so the content is trusted regardless of transport.
+ */
+async function assertIntegrity(buffer: ArrayBuffer, expectedSha256: string): Promise<void> {
+  const head = new TextDecoder().decode(new Uint8Array(buffer, 0, SQLITE_MAGIC.length));
+  if (head !== SQLITE_MAGIC) {
+    throw new Error('Not a SQLite file (bad magic)');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (hex !== expectedSha256) {
+    throw new Error('Collection checksum mismatch');
+  }
+}
+
 /**
  * Fetch and parse a collection database. Extraction results are cached in
  * IndexedDB; pass `fresh: true` to force a re-download + re-parse.
@@ -175,32 +258,28 @@ export async function loadCollectionEntries(
     }
   }
 
-  // 1. Download the database, reporting byte progress.
-  const response = await fetch(`/collections/${collection.id}.db`);
-  if (!response.ok) throw new Error(`Failed to fetch collection (${response.status})`);
+  // 1. Download the database from the first source that delivers the exact
+  //    expected bytes (SQLite magic + sha256 must match — HTTP 200 is not
+  //    proof, some hosts answer with an HTML fallback page).
+  let buffer: ArrayBuffer | null = null;
+  let lastError: unknown = null;
 
-  const total = Number(response.headers.get('content-length')) || collection.sizeBytes;
-  let buffer: ArrayBuffer;
-  if (response.body) {
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let loaded = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      loaded += value.byteLength;
-      onProgress?.({ stage: 'downloading', loaded, total });
+  for (const source of collectionSources(collection)) {
+    try {
+      const candidate = await fetchDatabase(collection, source, onProgress);
+      await assertIntegrity(candidate, collection.sha256);
+      buffer = candidate;
+      break;
+    } catch (error) {
+      console.debug(`[Collections] Source failed (${source}):`, error);
+      lastError = error;
     }
-    const merged = new Uint8Array(loaded);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    buffer = merged.buffer;
-  } else {
-    buffer = await response.arrayBuffer();
+  }
+
+  if (!buffer) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('All collection sources failed');
   }
 
   // 2. Parse: full-scan linkdatamodel (scraped links) and sourcedatamodel
