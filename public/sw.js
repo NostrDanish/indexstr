@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-// Crawlstr — self-destructing service worker (kill switch).
+// Indexstr — self-destructing service worker (kill switch).
 //
 // A previous version of this worker precached index.html and served hashed JS
 // cache-first with no invalidation. That pinned browsers to a stale bundle

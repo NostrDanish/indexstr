@@ -1,5 +1,5 @@
 /**
- * SIP-01 (Search Index Protocol) — Crawlstr publisher implementation.
+ * SIP-01 (Search Index Protocol) — Indexstr publisher implementation.
  * Canonical spec: https://github.com/NostrDanish/SIP-01 (public/spec/SIP-01.md)
  *
  * Byte-compatible with the canonical reference port
@@ -137,13 +137,13 @@ export interface IndexObservationInput {
   tags?: string[];
   language?: string;
   published?: number;
-  source?: string; // indexer software id, e.g. "crawlstr/1"
+  source?: string; // indexer software id, e.g. "indexstr/1"
   /* Extension registry (spec §9.2) — all optional, all ignored by
      consumers that don't know them. */
   type?: string;     // logical document type: page, article, repository, video, …
   platform?: string; // source platform: github, gitlab, youtube, …
   category?: string; // engine-defined content category
-  network?: string;  // clearnet | tor | i2p (Crawlstr only ever emits clearnet)
+  network?: string;  // clearnet | tor | i2p (Indexstr only ever emits clearnet)
   country?: string;  // ISO 3166-1 alpha-2
   mime?: string;     // document media type
 }

@@ -1,15 +1,15 @@
 import { useSeoMeta } from '@unhead/react';
-import { Radar, Globe, Shield, Zap, Users, Search } from 'lucide-react';
+import { Radar, Globe, Shield, Users, LibraryBig } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { CrawlerDashboard } from '@/components/crawler/CrawlerDashboard';
-import { CrawlstrLogo } from '@/components/crawler/CrawlstrLogo';
+import { IndexstrLogo } from '@/components/crawler/IndexstrLogo';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LoginArea } from '@/components/auth/LoginArea';
 
 const Index = () => {
   useSeoMeta({
-    title: 'Crawlstr — Decentralized Web Crawler Network',
-    description: 'Turn your browser into a voluntary web crawler. Help build a decentralized, censorship-resistant search index powered by Nostr.',
+    title: 'Indexstr — The Web, Pre-Indexed on Nostr',
+    description: 'A decentralized browser crawler that ships with curated URL collections. Turn your browser into a voluntary crawl node feeding the shared SIP-01 search index on Nostr.',
   });
 
   return (
@@ -18,10 +18,10 @@ const Index = () => {
       <header className="border-b sticky top-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-50">
         <div className="container max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <CrawlstrLogo className="h-8 w-8 shrink-0 rounded-md" />
-            <span className="font-bold text-lg tracking-tight">Crawlstr</span>
+            <IndexstrLogo className="h-8 w-8 shrink-0 rounded-md" />
+            <span className="font-bold text-lg tracking-tight">Indexstr</span>
             <span className="text-xs text-muted-foreground hidden sm:inline">
-              Decentralized Web Crawler
+              Curated Web Indexer
             </span>
           </div>
           <div className="flex items-center gap-1">
@@ -40,19 +40,20 @@ const Index = () => {
         />
 
         <div className="text-center space-y-4 max-w-2xl mx-auto">
-          <CrawlstrLogo className="h-24 w-24 mx-auto rounded-2xl shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-500" />
+          <IndexstrLogo className="h-24 w-24 mx-auto rounded-2xl shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-500" />
 
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium">
             <Globe className="h-3.5 w-3.5" />
-            Powered by Nostr
+            Powered by Nostr · SIP-01
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
-            Search without the cage.
+            The web, pre-indexed by everyone.
           </h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
-            Turn your browser into a voluntary web crawler. Every page you crawl
-            feeds the shared SIP-01 index — readable by 0xSearchstr, 0xPresearchstr,
-            UNCAGED, and any compatible client.
+            Indexstr ships with curated URL collections — top sites, awesome
+            lists, feeds, music, books, movies, memes and games. Load a pack,
+            press start, and your browser indexes every page into the shared
+            SIP-01 index on Nostr.
           </p>
         </div>
       </section>
@@ -61,20 +62,20 @@ const Index = () => {
       <section className="container max-w-6xl mx-auto px-4 pb-8">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto">
           <div className="flex items-center gap-3 p-4 rounded-lg border bg-card">
+            <LibraryBig className="h-8 w-8 text-primary shrink-0" />
+            <div>
+              <h3 className="font-semibold text-sm">8 Curated Collections</h3>
+              <p className="text-xs text-muted-foreground">
+                Thousands of URLs bundled, ready to index
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 p-4 rounded-lg border bg-card">
             <Shield className="h-8 w-8 text-primary shrink-0" />
             <div>
               <h3 className="font-semibold text-sm">Opt-in Only</h3>
               <p className="text-xs text-muted-foreground">
                 Nothing runs without your explicit consent
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-4 rounded-lg border bg-card">
-            <Zap className="h-8 w-8 text-primary shrink-0" />
-            <div>
-              <h3 className="font-semibold text-sm">Resource Aware</h3>
-              <p className="text-xs text-muted-foreground">
-                Respects battery, bandwidth, and WiFi settings
               </p>
             </div>
           </div>
@@ -109,15 +110,15 @@ const Index = () => {
             {[
               {
                 step: '1',
-                icon: Search,
-                title: 'Seed URLs',
-                desc: 'Add websites you want to index, or pick up crawl jobs from the network',
+                icon: LibraryBig,
+                title: 'Load a Collection',
+                desc: 'Pick a curated URL pack — or seed your own URLs manually',
               },
               {
                 step: '2',
                 icon: Radar,
                 title: 'Crawl',
-                desc: 'Your browser fetches pages, extracts content, and discovers new links',
+                desc: 'Your browser fetches pages, extracts content, respects robots.txt',
               },
               {
                 step: '3',
@@ -154,41 +155,49 @@ const Index = () => {
               <CardContent className="pt-6">
                 <pre className="text-xs sm:text-sm font-mono text-muted-foreground overflow-x-auto whitespace-pre">
 {`┌──────────────────────────┐
-│       CRAWLSTR PWA       │
-│  (this app — you are     │
-│   the crawler)           │
-└───────────┬──────────────┘
-            │
-  ┌─────────▼─────────┐
-  │  CRAWLER ENGINE   │
-  │  Queue → Fetch    │
-  │   → Parse → Hash  │
-  │   → SIP-01 Sign   │
-  │   → Publish       │
-  └─────────┬─────────┘
-            │
-      ┌─────▼─────┐
-      │   NOSTR   │
-      │  RELAYS   │
-      │           │
-      │ kind 39697│
-      │ (SIP-01)  │
-      └─────┬─────┘
-            │
-   ┌────────┼────────┐
-   ▼        ▼        ▼
-0xSearchstr 0xPre-  UNCAGED
-            searchstr
-   │        │        │
-   └────────┼────────┘
-            │
-     ┌──────▼──────┐
-     │  Any SIP-01  │
-     │  compatible  │
-     │  search node │
-     └──────┬──────┘
-            │
-      SEARCH RESULTS`}
+ │       INDEXSTR PWA       │
+ │  (this app — you are     │
+ │   the indexer)           │
+ └───────────┬──────────────┘
+             │
+   ┌─────────▼─────────┐
+   │  URL COLLECTIONS  │
+   │  top · awesome ·  │
+   │  feeds · music ·  │
+   │  books · movies · │
+   │  memes · games    │
+   └─────────┬─────────┘
+             │
+   ┌─────────▼─────────┐
+   │  CRAWLER ENGINE   │
+   │  Queue → Fetch    │
+   │   → Parse → Hash  │
+   │   → SIP-01 Sign   │
+   │   → Publish       │
+   └─────────┬─────────┘
+             │
+       ┌─────▼─────┐
+       │   NOSTR   │
+       │  RELAYS   │
+       │           │
+       │ kind 39697│
+       │ (SIP-01)  │
+       └─────┬─────┘
+             │
+    ┌────────┼────────┐
+    ▼        ▼        ▼
+ 0xSearchstr 0xPre-  UNCAGED
+             searchstr
+    │        │        │
+    └────────┼────────┘
+             │
+      ┌──────▼──────┐
+      │  Any SIP-01  │
+      │  compatible  │
+      │  search node │
+      └──────┬──────┘
+             │
+       SEARCH RESULTS`}
                 </pre>
               </CardContent>
             </Card>
@@ -201,8 +210,8 @@ const Index = () => {
         <div className="container max-w-6xl mx-auto px-4 py-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CrawlstrLogo className="h-5 w-5 shrink-0 rounded" />
-              <span>Crawlstr — Decentralized Web Crawler Network</span>
+              <IndexstrLogo className="h-5 w-5 shrink-0 rounded" />
+              <span>Indexstr — the web, pre-indexed on Nostr. A Crawlstr fork.</span>
             </div>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>No tracking</span>

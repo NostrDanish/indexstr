@@ -25,6 +25,13 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -39,7 +46,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { CrawlstrLogo } from '@/components/crawler/CrawlstrLogo';
+import { IndexstrLogo } from '@/components/crawler/IndexstrLogo';
+import { CollectionsPanel } from '@/components/crawler/CollectionsPanel';
 import { useCrawler } from '@/hooks/useCrawler';
 import { cn } from '@/lib/utils';
 
@@ -82,6 +90,7 @@ export function CrawlerDashboard() {
     start,
     stop,
     seedUrl,
+    seedCollection,
     clearAll,
     updateSettings,
     getSettings,
@@ -89,7 +98,15 @@ export function CrawlerDashboard() {
 
   const [seedInput, setSeedInput] = useState('');
   const [copied, setCopied] = useState(false);
+  // Settings live in the engine (not React state) — bump a tick to re-read
+  // them after each change so switches/select reflect the new value.
+  const [, setSettingsTick] = useState(0);
   const settings = getSettings();
+
+  const changeSettings = (patch: Parameters<typeof updateSettings>[0]) => {
+    updateSettings(patch);
+    setSettingsTick((t) => t + 1);
+  };
 
   const handleSeed = () => {
     if (!seedInput.trim()) return;
@@ -122,7 +139,7 @@ export function CrawlerDashboard() {
                 'p-2.5 rounded-xl transition-colors',
                 isRunning ? 'bg-primary/15' : 'bg-muted'
               )}>
-                <CrawlstrLogo
+                <IndexstrLogo
                   animated={isRunning}
                   className={cn(
                     'h-7 w-7 rounded-md',
@@ -218,7 +235,7 @@ export function CrawlerDashboard() {
             {stats.thinContent > 0 && (
               <p className="text-xs text-muted-foreground">
                 Pages with little text are usually JavaScript-rendered apps —
-                Crawlstr parses static HTML only.
+                Indexstr parses static HTML only.
               </p>
             )}
           </CardContent>
@@ -305,16 +322,30 @@ export function CrawlerDashboard() {
         </Card>
       </div>
 
-      {/* Tabs for Seed / History / Settings */}
-      <Tabs defaultValue="seed" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+      {/* Tabs for Collections / Seed / History / Settings */}
+      <Tabs defaultValue="collections" className="w-full">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="collections">
+            <Database className="h-4 w-4 mr-1 hidden sm:inline" />
+            Collections
+          </TabsTrigger>
           <TabsTrigger value="seed">Seed URLs</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="settings">
-            <Settings2 className="h-4 w-4 mr-1" />
+            <Settings2 className="h-4 w-4 mr-1 hidden sm:inline" />
             Settings
           </TabsTrigger>
         </TabsList>
+
+        {/* Collections Tab — bundled curated URL packs */}
+        <TabsContent value="collections">
+          <CollectionsPanel
+            onSeed={seedCollection}
+            ready={initialized}
+            isRunning={isRunning}
+            onStart={start}
+          />
+        </TabsContent>
 
         {/* Seed URL Tab */}
         <TabsContent value="seed">
@@ -476,7 +507,7 @@ export function CrawlerDashboard() {
                   <Switch
                     id="wifi-only"
                     checked={settings.wifiOnly}
-                    onCheckedChange={(v) => updateSettings({ wifiOnly: v })}
+                    onCheckedChange={(v) => changeSettings({ wifiOnly: v })}
                   />
                 </div>
 
@@ -493,7 +524,7 @@ export function CrawlerDashboard() {
                   <Switch
                     id="charging-only"
                     checked={settings.chargingOnly}
-                    onCheckedChange={(v) => updateSettings({ chargingOnly: v })}
+                    onCheckedChange={(v) => changeSettings({ chargingOnly: v })}
                   />
                 </div>
 
@@ -510,7 +541,7 @@ export function CrawlerDashboard() {
                   <Switch
                     id="respect-robots"
                     checked={settings.respectRobots}
-                    onCheckedChange={(v) => updateSettings({ respectRobots: v })}
+                    onCheckedChange={(v) => changeSettings({ respectRobots: v })}
                   />
                 </div>
 
@@ -527,8 +558,36 @@ export function CrawlerDashboard() {
                   <Switch
                     id="eco-mode"
                     checked={settings.ecoMode}
-                    onCheckedChange={(v) => updateSettings({ ecoMode: v })}
+                    onCheckedChange={(v) => changeSettings({ ecoMode: v })}
                   />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Database className="h-4 w-4 text-muted-foreground" />
+                    <div>
+                      <Label htmlFor="bandwidth-cap">Session Bandwidth Cap</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Crawling pauses after this much data per session
+                      </p>
+                    </div>
+                  </div>
+                  <Select
+                    value={String(settings.maxBandwidthMB)}
+                    onValueChange={(v) => changeSettings({ maxBandwidthMB: Number(v) })}
+                  >
+                    <SelectTrigger id="bandwidth-cap" className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="25">25 MB</SelectItem>
+                      <SelectItem value="100">100 MB</SelectItem>
+                      <SelectItem value="250">250 MB</SelectItem>
+                      <SelectItem value="1000">1 GB</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 

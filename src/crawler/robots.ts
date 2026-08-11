@@ -112,7 +112,7 @@ function parseRobotsTxt(text: string): RobotsRules {
 
     if (directive === 'user-agent') {
       const agent = value.toLowerCase();
-      relevantAgent = agent === '*' || agent.includes('searchstr') || agent.includes('crawlstr');
+      relevantAgent = agent === '*' || agent.includes('searchstr') || agent.includes('indexstr');
     }
 
     if (relevantAgent) {

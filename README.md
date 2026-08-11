@@ -1,23 +1,38 @@
-# Crawlstr
+# Indexstr
 
 <p align="center">
-  <img src="public/brand/logo.png" alt="Crawlstr — a spider sitting in its web" width="192" height="192">
+  <img src="public/brand/logo.png" alt="Indexstr — a spider sitting in its web" width="192" height="192">
 </p>
 
-**Decentralized browser-based web crawler.** Turn your browser into a voluntary crawl node that feeds the shared [SIP-01](https://github.com/NostrDanish/SIP-01) index on Nostr — the canonical [Search Index Protocol v1.1](https://github.com/NostrDanish/SIP-01/blob/main/public/spec/SIP-01.md). No backend. No tracking. No accounts required.
+**The web, pre-indexed on Nostr.** Indexstr is a decentralized browser-based web indexer — a fork of [Crawlstr](https://github.com/NostrDanish/Crwalstr) that ships with **curated URL collections built in**, so there is something worth indexing from the very first click. No backend. No tracking. No accounts required.
 
-Every page you crawl becomes a **kind 39697 web index observation** — instantly searchable by [0xSearchstr](https://0xsearchstr.shakespeare.wtf), [0xPresearchstr](https://presearchstr.shakespeare.wtf), [UNCAGED](https://uncaged.shakespeare.wtf), and any future SIP-01 compatible client.
+Load a collection, press **Start Crawling**, and every page becomes a **kind 39697 web index observation** on the shared [SIP-01](https://github.com/NostrDanish/SIP-01) index — instantly searchable by [0xSearchstr](https://0xsearchstr.shakespeare.wtf), [0xPresearchstr](https://presearchstr.shakespeare.wtf), [UNCAGED](https://uncaged.shakespeare.wtf), and any future SIP-01 compatible client.
 
-**Live:** [https://crawlstr.shakespeare.wtf](https://crawlstr.shakespeare.wtf)
+---
 
-[![Edit with Shakespeare](https://shakespeare.diy/badge.svg)](https://shakespeare.diy/clone?url=https%3A%2F%2Fgithub.com%2FNostrDanish%2FCrwalstr.git)
+## The Collections
+
+Eight curated link packs ship inside the app as SQLite databases, parsed locally in your browser (see `src/crawler/sqlite.ts` — a tiny read-only SQLite reader written for this purpose):
+
+| Collection | Contents | Size |
+|------------|----------|------|
+| **Top Sites** | High-traffic websites, news aggregators, community threads | ~26 MB |
+| **Awesome Lists** | Curated awesome-* lists — the best tools and resources per topic | ~20 MB |
+| **RSS Feeds** | RSS and Atom feeds across tech, science, news and culture | ~19 MB |
+| **Music** | Artists, labels, streaming pages, music communities | ~10 MB |
+| **Books** | Digital libraries, book search engines, reading platforms | ~1.3 MB |
+| **Movies** | Film databases, streaming indexes, cinema resources | ~1.2 MB |
+| **Memes** | Meme archives, humor sites, internet culture | ~1 MB |
+| **Video Games** | Game databases, stores, mods, gaming communities | ~0.9 MB |
+
+Databases download on demand (only the collection you load), parse in a couple of seconds, and the extracted URL list is cached in IndexedDB — reloading a collection later is instant. Collection URLs are indexed **exactly as listed** (`followLinks: false`): the collection IS the crawl plan.
 
 ---
 
 ## How It Works
 
 ```
-You add a seed URL
+You load a curated collection (or seed URLs manually)
        │
        ▼
 ┌─────────────┐
@@ -56,19 +71,20 @@ You add a seed URL
 
 ## What Makes This Different
 
-Most "decentralized search" projects still run centralized crawlers. Crawlstr makes **every browser a potential crawler** — opt-in, transparent, resource-aware.
+Crawlstr made every browser a potential crawler. Indexstr answers the next question: *"crawl what, exactly?"* — with thousands of curated URLs loaded and ready.
 
 | Feature | Description |
 |---------|-------------|
+| **Bundled collections** | 8 curated URL packs, from top sites to memes |
+| **In-browser SQLite** | Collection databases parsed client-side by a purpose-built reader |
 | **Opt-in only** | Nothing runs without explicitly pressing "Start Crawling" |
 | **SIP-01 native** | Same protocol as 0xSearchstr, 0xPresearchstr, UNCAGED — one shared index |
 | **Per-device identity** | Anonymous indexer keypair, separate from your Nostr identity |
 | **No query leakage** | Events contain page metadata only — never what anyone searched for |
 | **Resource aware** | Battery, WiFi, bandwidth limits. Eco mode. Charging-only mode. |
 | **robots.txt** | Respected by default (configurable) |
-| **Rate limited** | 5–8 seconds between requests per domain |
+| **Rate limited** | Seconds between requests per domain — slow, respectful, unstoppable |
 | **Persistent queue** | IndexedDB-backed, survives browser restarts |
-| **Offline capable** | Crawl queue persists; publishes when Nostr is reachable |
 | **PWA** | Installable, works on mobile and desktop |
 
 ---
@@ -76,27 +92,31 @@ Most "decentralized search" projects still run centralized crawlers. Crawlstr ma
 ## Quick Start
 
 ```bash
-git clone https://github.com/NostrDanish/Crwalstr.git
-cd Crwalstr
+git clone <this-repo>
+cd indexstr
 npm install
 npm run dev
 ```
 
-Open the printed URL, add a seed URL, press **Start Crawling**.
+Open the printed URL, open the **Collections** tab, load a pack, press **Start Crawling**.
 
 ---
 
 ## Usage
 
-### Seed a URL
+### Load a Collection
 
-Enter any URL in the **Seed URLs** tab:
+The **Collections** tab shows the eight bundled packs with URL counts and samples. **Load into queue** downloads the database, extracts every URL (normalized per SIP-01 §7, deduped, already-crawled pages skipped), and enqueues them at depth 0 — each URL is indexed as-is, no link following.
+
+Large collections take days to work through at a respectful per-domain pace. That is by design: the queue persists across restarts and churns steadily whenever the crawler is on.
+
+### Seed a URL manually
+
+The **Seed URLs** tab still works exactly like Crawlstr: enter any URL and the crawler follows links up to depth 3.
 
 ```
 https://bitcoin.org
 ```
-
-The crawler fetches the page, extracts content, hashes it, signs a SIP-01 observation, and publishes to Nostr. Then it follows links up to depth 3.
 
 ### Crawler Settings
 
@@ -120,7 +140,7 @@ Each browser gets its own anonymous indexer keypair (visible in the dashboard). 
 
 ## Protocol
 
-Crawlstr publishes **SIP-01 (Search Index Protocol)** events — the same protocol used by the entire Searchstr ecosystem.
+Indexstr publishes **SIP-01 (Search Index Protocol)** events — the same protocol used by the entire Searchstr ecosystem.
 
 ### Kind 39697 — Web Index Observation
 
@@ -136,7 +156,7 @@ Crawlstr publishes **SIP-01 (Search Index Protocol)** events — the same protoc
     ["l", "en"],
     ["x", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
     ["v", "1"],
-    ["source", "crawlstr/1"],
+    ["source", "indexstr/1"],
     ["network", "clearnet"],
     ["type", "page"],
     ["alt", "Web index observation: Example Page"]
@@ -151,7 +171,7 @@ Crawlstr publishes **SIP-01 (Search Index Protocol)** events — the same protoc
 | `x` | Content hash: `sha256(title + "\n" + description)` |
 | `v` | Schema version `"1"` |
 | `l` | ISO 639-1 language code |
-| `source` | `"crawlstr/1"` |
+| `source` | `"indexstr/1"` |
 | `network` | Extension registry (§9.2) — always `clearnet` for a browser crawler |
 | `type` | Extension registry — `repository` for GitHub/GitLab, else `page` |
 | `alt` | Human-readable description (the `alt` convention, spec §12.3) |
@@ -179,10 +199,10 @@ Each observation is pushed to every relay in the set via targeted per-relay conn
 
 ## Federation: One Index, Many Crawlers
 
-Crawlstr is **one more independent indexer** in the SIP-01 ecosystem:
+Indexstr is **one more independent indexer** in the SIP-01 ecosystem:
 
 ```
-Crawlstr (browser crawler)
+Indexstr (browser indexer w/ curated collections)
     │
     ▼ kind 39697, signed by device indexer key
 Nostr Relays
@@ -199,14 +219,14 @@ Multiple crawlers observing the same URL produce events with the **same `d` tag*
 
 ## Browser Limitations
 
-Crawlstr is honest about what a browser can and cannot do:
+Indexstr is honest about what a browser can and cannot do:
 
-- **CORS** — A browser cannot read cross-origin responses unless the site sends CORS headers, and most don't. Crawlstr tries a direct fetch first, then falls back to a **CORS proxy** so real websites can actually be crawled. The trade-off is honest: when the proxy is used, the proxy operator sees which URL was fetched (never a search query, never a user identity). The dashboard shows the direct/proxy split per session.
-- **JavaScript rendering** — Crawlstr parses static HTML. Single-page apps that require JavaScript rendering won't have their full content extracted.
+- **CORS** — A browser cannot read cross-origin responses unless the site sends CORS headers, and most don't. Indexstr tries a direct fetch first, then falls back to a **CORS proxy** so real websites can actually be crawled. The trade-off is honest: when the proxy is used, the proxy operator sees which URL was fetched (never a search query, never a user identity). The dashboard shows the direct/proxy split per session.
+- **JavaScript rendering** — Indexstr parses static HTML. Single-page apps that require JavaScript rendering won't have their full content extracted.
 - **Background execution** — Mobile browsers may throttle or kill background tabs. The crawler is most effective when the tab is active.
-- **Rate limits** — Per-domain rate limiting is built-in (5–8 seconds between requests). This is respectful by design.
+- **Rate limits** — Per-domain rate limiting is built-in. This is respectful by design, and why bundled collections are curated rather than endless.
 
-For unrestricted crawling, run a desktop/CLI SIP-01 crawler alongside Crawlstr.
+For unrestricted crawling, run a desktop/CLI SIP-01 crawler alongside Indexstr.
 
 ---
 
@@ -216,7 +236,8 @@ For unrestricted crawling, run a desktop/CLI SIP-01 crawler alongside Crawlstr.
 - **TailwindCSS 4** + shadcn/ui
 - **Nostrify** — Nostr relay pool
 - **nostr-tools** — Event signing (`finalizeEvent`)
-- **idb** — IndexedDB wrapper for the crawl queue
+- **idb** — IndexedDB wrapper for the crawl queue + collection cache
+- **Custom SQLite reader** (`src/crawler/sqlite.ts`) — parses collection databases in-browser, no WASM
 - **TanStack Query** — Data fetching + caching
 - **PWA** — Service worker, manifest, installable
 
@@ -229,6 +250,8 @@ src/
 ├── crawler/
 │   ├── engine.ts           ← Main crawler orchestrator (crawl loop, queue, scheduling)
 │   ├── queue.ts            ← IndexedDB persistent queue (survives restarts)
+│   ├── collections.ts      ← Curated collection registry + loader/cache
+│   ├── sqlite.ts           ← Minimal read-only SQLite parser (b-tree, records, overflow)
 │   ├── fetcher.ts          ← HTTP fetcher (CORS, timeout, size limits)
 │   ├── parser.ts           ← HTML parser (title, description, text, links, language)
 │   ├── hasher.ts           ← SHA-256 content hashing for local dedup
@@ -241,12 +264,17 @@ src/
 │   └── types.ts            ← TypeScript interfaces
 ├── components/
 │   └── crawler/
-│       └── CrawlerDashboard.tsx  ← Main UI (toggle, stats, seed, history, settings)
+│       ├── CrawlerDashboard.tsx   ← Main UI (toggle, stats, tabs)
+│       ├── CollectionsPanel.tsx   ← Bundled collection cards + load/progress
+│       └── IndexstrLogo.tsx       ← Brand mark
 ├── hooks/
 │   └── useCrawler.ts       ← React hook wiring engine to Nostr
 ├── pages/
 │   └── Index.tsx           ← Landing page + dashboard
 └── NIP.md                  ← Protocol documentation
+
+public/
+└── collections/            ← Bundled SQLite URL collections (loaded on demand)
 ```
 
 ---
@@ -255,7 +283,8 @@ src/
 
 | Project | Role | URL |
 |---------|------|-----|
-| **Crawlstr** (this) | Browser crawler → SIP-01 publisher | [crawlstr.shakespeare.wtf](https://crawlstr.shakespeare.wtf) |
+| **Indexstr** (this) | Browser indexer w/ collections → SIP-01 publisher | — |
+| [Crawlstr](https://github.com/NostrDanish/Crwalstr) | The original browser crawler | [crawlstr.shakespeare.wtf](https://crawlstr.shakespeare.wtf) |
 | [0xSearchstr](https://github.com/NostrDanish/0xSearchstr) | Search engine → SIP-01 reader | [0xsearchstr.shakespeare.wtf](https://0xsearchstr.shakespeare.wtf) |
 | [0xPresearchstr](https://github.com/NostrDanish/0xPresearchstr) | Community fork with keyword staking | [presearchstr.shakespeare.wtf](https://presearchstr.shakespeare.wtf) |
 | [UNCAGED-ENGINE](https://github.com/NostrDanish/UNCAGED-ENGINE) | Minimal search engine template | [uncaged.shakespeare.wtf](https://uncaged.shakespeare.wtf) |
@@ -264,10 +293,10 @@ src/
 
 ## Privacy, Honestly
 
-- **No login required** to crawl. No account. No tracking.
-- Crawl observations are signed by a **per-device anonymous keypair**, never your personal Nostr identity.
+- **No login required** to index. No account. No tracking.
+- Observations are signed by a **per-device anonymous keypair**, never your personal Nostr identity.
 - Events contain **page metadata only** — never search queries, never browsing history.
-- Your crawl history stays in your browser (IndexedDB). Clearing browser data removes it.
+- Your crawl history and the collection cache stay in your browser (IndexedDB). Clearing browser data removes them.
 - Relay operators see the observation event and your IP address — that's how Nostr works. Key separation is guaranteed; network anonymity is not.
 - Use a VPN or Tor — we recommend [NymVPN](https://nym.com).
 

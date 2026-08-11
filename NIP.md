@@ -1,6 +1,7 @@
-# Crawlstr — Event Kinds & Protocol Reference
+# Indexstr — Event Kinds & Protocol Reference
 
-Crawlstr is a **browser-based web crawler** that publishes to the **shared SIP-01
+Indexstr is a **browser-based web indexer** (a [Crawlstr](https://github.com/NostrDanish/Crwalstr) fork)
+that ships with **curated URL collections** and publishes to the **shared SIP-01
 (Search Index Protocol) index** on Nostr. It implements the **canonical SIP-01
 specification v1.1** — [github.com/NostrDanish/SIP-01](https://github.com/NostrDanish/SIP-01)
 (`public/spec/SIP-01.md`) — byte-compatibly with
@@ -13,12 +14,12 @@ specification v1.1** — [github.com/NostrDanish/SIP-01](https://github.com/Nost
 
 | Schema | Kind | Type | Status |
 |--------|------|------|--------|
-| Web Index Observation (SIP-01) | **39697** | addressable | **Written** by Crawlstr |
+| Web Index Observation (SIP-01) | **39697** | addressable | **Written** by Indexstr |
 
-Crawlstr is a **pure SIP-01 publisher** — it only writes kind 39697 events.
+Indexstr is a **pure SIP-01 publisher** — it only writes kind 39697 events.
 It does NOT write community submissions (kind 30078) or query caches.
 
-## What Crawlstr Writes
+## What Indexstr Writes
 
 ### Kind 39697 — Web Index Observation (SIP-01)
 
@@ -39,7 +40,7 @@ public metadata."*
     ["x", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
     ["v", "1"],
     ["published", "1786200000"],
-    ["source", "crawlstr/1"],
+    ["source", "indexstr/1"],
     ["network", "clearnet"],
     ["type", "page"],
     ["alt", "Web index observation: Example Page"]
@@ -59,7 +60,7 @@ public metadata."*
 | `l` | – | ISO 639-1 language code (validated two-letter shape) |
 | `t` | – | 0–8 lowercase topic tags matching `^[a-z0-9][a-z0-9-]{0,99}$` |
 | `published` | – | Unix seconds — page's claimed publication time (§12.2) |
-| `source` | – | `"crawlstr/1"` — identifies this software (≤ 100 chars) |
+| `source` | – | `"indexstr/1"` — identifies this software (≤ 100 chars) |
 
 **Extension tags (spec §9.2 registry):**
 
@@ -84,13 +85,13 @@ public metadata."*
 - **Addressable** — re-crawling the same URL replaces the previous observation
   (one slot per indexer per URL).
 
-## How Crawlstr Differs from Other SIP-01 Publishers
+## How Indexstr Differs from Other SIP-01 Publishers
 
-| Feature | 0xSearchstr / UNCAGED | Crawlstr |
+| Feature | 0xSearchstr / UNCAGED | Indexstr |
 |---------|----------------------|----------|
-| **Trigger** | Search results surfaced by providers | Active web crawling |
-| **Discovery** | Search results from external APIs | Link following from seed URLs |
-| **Depth** | 1 (direct results only) | Configurable (up to 3 by default) |
+| **Trigger** | Search results surfaced by providers | Active web indexing |
+| **Discovery** | Search results from external APIs | Bundled curated URL collections + manual seeds |
+| **Depth** | 1 (direct results only) | 0 for collections (exact URLs), up to 3 for manual seeds |
 | **Rate limiting** | N/A (API-driven) | Per-domain, configurable |
 | **robots.txt** | N/A | Respected (configurable) |
 | **Queue** | N/A | IndexedDB persistent queue |
@@ -100,7 +101,7 @@ The **event schema is identical**. The difference is only in how URLs are discov
 
 ## Relay Publishing
 
-Crawlstr publishes to the same relay pool as the ecosystem:
+Indexstr publishes to the same relay pool as the ecosystem:
 
 **Search relays (NIP-50):**
 - `wss://relay.nostr.band/`
@@ -115,7 +116,7 @@ Crawlstr publishes to the same relay pool as the ecosystem:
 
 ## Reading the Index
 
-Any SIP-01 compatible search engine can read Crawlstr's observations:
+Any SIP-01 compatible search engine can read Indexstr's observations:
 
 ```json
 {
@@ -147,11 +148,11 @@ operators from spec §15 (`site:`, `title:`, `lang:`, `after:`, …):
 
 ## Trust Model
 
-- Crawlstr observations are **structurally trusted** — any indexer pubkey is accepted.
+- Indexstr observations are **structurally trusted** — any indexer pubkey is accepted.
 - Events are validated on parse: schema version, URL allowlist, field caps.
 - Agreement across independent indexers (same `d`, different `pubkey`) is the
   ranking signal.
-- Crawlstr is just one more independent indexer in the SIP-01 ecosystem.
+- Indexstr is just one more independent indexer in the SIP-01 ecosystem.
 
 ## References
 

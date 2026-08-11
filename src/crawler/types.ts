@@ -8,6 +8,11 @@ export interface CrawlJob {
   attempts: number;
   lastAttempt?: number;
   nextAttempt?: number;
+  /**
+   * Set to false to index only this exact URL without following its links.
+   * Curated collections use this — the collection IS the crawl plan.
+   */
+  followLinks?: boolean;
 }
 
 export interface ParsedPage {
@@ -73,7 +78,9 @@ export const DEFAULT_SETTINGS: CrawlerSettings = {
   wifiOnly: false,
   chargingOnly: false,
   respectRobots: true,
-  maxBandwidthMB: 25,
+  // 250 MB per browser session — collections are big, and silently stalling
+  // at the old 25 MB cap looked like a broken crawler.
+  maxBandwidthMB: 250,
   maxPagesPerHour: 100,
   maxDepth: 3,
   maxConcurrent: 1,

@@ -26,7 +26,7 @@ let db: IDBPDatabase<CrawlerDB> | null = null;
 export async function initDB(): Promise<IDBPDatabase<CrawlerDB>> {
   if (db) return db;
 
-  db = await openDB<CrawlerDB>('searchstr-crawler', 1, {
+  db = await openDB<CrawlerDB>('indexstr-crawler', 1, {
     upgrade(database) {
       const queueStore = database.createObjectStore('queue', { keyPath: 'url' });
       queueStore.createIndex('by-priority', 'priority');
@@ -42,6 +42,33 @@ export async function initDB(): Promise<IDBPDatabase<CrawlerDB>> {
 export async function addToQueue(job: CrawlJob): Promise<void> {
   const database = await initDB();
   await database.put('queue', job);
+}
+
+/**
+ * Bulk-insert jobs in chunked transactions. Used when seeding a curated
+ * collection, which can mean tens of thousands of URLs at once.
+ */
+export async function addManyToQueue(
+  jobs: CrawlJob[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
+  const database = await initDB();
+  const CHUNK = 2000;
+  for (let i = 0; i < jobs.length; i += CHUNK) {
+    const tx = database.transaction('queue', 'readwrite');
+    for (const job of jobs.slice(i, i + CHUNK)) {
+      void tx.store.put(job);
+    }
+    await tx.done;
+    onProgress?.(Math.min(i + CHUNK, jobs.length), jobs.length);
+  }
+}
+
+/** Every URL that has already been crawled — for bulk dedup during seeding. */
+export async function getCrawledUrlSet(): Promise<Set<string>> {
+  const database = await initDB();
+  const keys = await database.getAllKeys('crawled');
+  return new Set(keys);
 }
 
 export async function getNextJob(): Promise<CrawlJob | null> {

@@ -1,6 +1,6 @@
 /**
  * Relay configuration — matches the Searchstr/UNCAGED ecosystem plus
- * Crawlstr's own publish set.
+ * Indexstr's own publish set.
  *
  * Index observations (SIP-01, kind 39697) are published to:
  * 1. The NIP-50 search relay pool (so search engines see them immediately)

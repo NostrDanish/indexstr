@@ -11,6 +11,7 @@ import { publishIndexObservation } from './publisher';
 import {
   initDB,
   addToQueue,
+  addManyToQueue,
   getNextJob,
   removeFromQueue,
   getQueueSize,
@@ -18,6 +19,7 @@ import {
   markCrawled,
   findByHash,
   getCrawledCount,
+  getCrawledUrlSet,
   getRecentCrawled,
   clearQueue,
 } from './queue';
@@ -63,7 +65,7 @@ export class CrawlerEngine {
   private onStatsChange?: (stats: CrawlerStats) => void;
 
   constructor(settings?: Partial<CrawlerSettings>) {
-    const stored = localStorage.getItem('crawler-settings');
+    const stored = localStorage.getItem('indexstr-settings');
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...(stored ? JSON.parse(stored) : {}),
@@ -115,7 +117,7 @@ export class CrawlerEngine {
 
   updateSettings(settings: Partial<CrawlerSettings>): void {
     this.settings = { ...this.settings, ...settings };
-    localStorage.setItem('crawler-settings', JSON.stringify(this.settings));
+    localStorage.setItem('indexstr-settings', JSON.stringify(this.settings));
   }
 
   async seedUrl(url: string, priority = 1.0): Promise<void> {
@@ -129,6 +131,34 @@ export class CrawlerEngine {
     });
     this.stats.queueSize = await getQueueSize();
     this.emitStats();
+  }
+
+  /**
+   * Seed a curated collection: a large list of pre-normalized URLs that are
+   * indexed exactly as listed — no link following (the collection IS the
+   * crawl plan). URLs already crawled are skipped. Returns how many jobs
+   * were added.
+   */
+  async seedCollection(
+    urls: string[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const crawled = await getCrawledUrlSet();
+    const jobs: CrawlJob[] = [];
+    for (const url of urls) {
+      if (crawled.has(url)) continue;
+      jobs.push({
+        url,
+        priority: 0.9,
+        depth: 0,
+        attempts: 0,
+        followLinks: false,
+      });
+    }
+    await addManyToQueue(jobs, onProgress);
+    this.stats.queueSize = await getQueueSize();
+    this.emitStats();
+    return jobs.length;
   }
 
   async clearAll(): Promise<void> {
@@ -257,15 +287,16 @@ export class CrawlerEngine {
       image: parsed.image,
       language: parsed.language,
       published: parsed.published,
-      source: 'crawlstr/1',
+      source: 'indexstr/1',
       // Extension registry (spec §9.2): a browser crawler only ever sees clearnet.
       network: 'clearnet',
       ...(platform ? { platform } : {}),
       type: platform === 'github' || platform === 'gitlab' ? 'repository' : 'page',
     });
 
-    // Add discovered links to queue
-    if (job.depth < this.settings.maxDepth) {
+    // Add discovered links to queue (collection-seeded jobs index the exact
+    // URL only — their crawl plan is already curated)
+    if (job.followLinks !== false && job.depth < this.settings.maxDepth) {
       const maxLinks = this.settings.ecoMode ? 5 : 10;
       for (const link of parsed.links.slice(0, maxLinks)) {
         const normalized = normalizeIndexUrl(link);

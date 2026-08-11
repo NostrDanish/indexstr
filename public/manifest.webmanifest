@@ -1,10 +1,10 @@
 {
-  "name": "Crawlstr — Decentralized Web Crawler",
-  "short_name": "Crawlstr",
-  "description": "Turn your browser into a voluntary web crawler. Help build a decentralized, censorship-resistant search index.",
+  "name": "Indexstr — The Web, Pre-Indexed on Nostr",
+  "short_name": "Indexstr",
+  "description": "A decentralized browser crawler with curated URL collections built in. Help build a censorship-resistant search index on Nostr.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a120d",
+  "background_color": "#000000",
   "theme_color": "#6cbf5a",
   "orientation": "portrait-primary",
   "icons": [

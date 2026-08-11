@@ -98,6 +98,14 @@ export function useCrawler() {
     await engineRef.current.seedUrl(url);
   }, []);
 
+  const seedCollection = useCallback(
+    async (urls: string[], onProgress?: (done: number, total: number) => void): Promise<number> => {
+      if (!engineRef.current) return 0;
+      return engineRef.current.seedCollection(urls, onProgress);
+    },
+    [],
+  );
+
   const clearAll = useCallback(async () => {
     if (!engineRef.current) return;
     await engineRef.current.clearAll();
@@ -131,6 +139,7 @@ export function useCrawler() {
     start,
     stop,
     seedUrl,
+    seedCollection,
     clearAll,
     updateSettings,
     getSettings,
