@@ -1,13 +1,21 @@
-// IndexedDB-backed crawl queue
+// IndexedDB-backed crawl queue + observation outbox
+//
+// v2 adds:
+//   - `shard` on every CrawlJob + a by-shard index, so the scheduler can
+//     prefer the node's home shard (deterministic distributed assignment)
+//   - an `outbox` store holding signed kind 39697 events that could not be
+//     published (all relays unreachable). Local-first rule: crawl progress
+//     is never lost because the network is down — events flush on retry.
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import type { NostrEvent } from '@nostrify/nostrify';
 import type { CrawlJob } from './types';
 
 interface CrawlerDB extends DBSchema {
   queue: {
     key: string;
     value: CrawlJob;
-    indexes: { 'by-priority': number };
+    indexes: { 'by-priority': number; 'by-shard': number };
   };
   crawled: {
     key: string;
@@ -19,20 +27,42 @@ interface CrawlerDB extends DBSchema {
     };
     indexes: { 'by-hash': string };
   };
+  outbox: {
+    key: number;
+    value: {
+      event: NostrEvent;
+      queuedAt: number;
+    };
+  };
 }
+
+/** Upper bound for held observations — a full outbox drops oldest-first logic
+ *  in favor of simply not storing more (they can be re-crawled later). */
+export const OUTBOX_MAX = 5000;
 
 let db: IDBPDatabase<CrawlerDB> | null = null;
 
 export async function initDB(): Promise<IDBPDatabase<CrawlerDB>> {
   if (db) return db;
 
-  db = await openDB<CrawlerDB>('indexstr-crawler', 1, {
-    upgrade(database) {
-      const queueStore = database.createObjectStore('queue', { keyPath: 'url' });
-      queueStore.createIndex('by-priority', 'priority');
+  db = await openDB<CrawlerDB>('indexstr-crawler', 2, {
+    upgrade(database, oldVersion, _newVersion, tx) {
+      if (oldVersion < 1) {
+        const queueStore = database.createObjectStore('queue', { keyPath: 'url' });
+        queueStore.createIndex('by-priority', 'priority');
 
-      const crawledStore = database.createObjectStore('crawled', { keyPath: 'url' });
-      crawledStore.createIndex('by-hash', 'contentHash');
+        const crawledStore = database.createObjectStore('crawled', { keyPath: 'url' });
+        crawledStore.createIndex('by-hash', 'contentHash');
+      }
+      if (oldVersion < 2) {
+        const queueStore = tx.objectStore('queue');
+        if (!queueStore.indexNames.contains('by-shard')) {
+          queueStore.createIndex('by-shard', 'shard');
+        }
+        if (!database.objectStoreNames.contains('outbox')) {
+          database.createObjectStore('outbox', { autoIncrement: true });
+        }
+      }
     },
   });
 
@@ -64,29 +94,57 @@ export async function addManyToQueue(
   }
 }
 
-/** Every URL that has already been crawled — for bulk dedup during seeding. */
-export async function getCrawledUrlSet(): Promise<Set<string>> {
+/**
+ * Pick the next job.
+ *
+ * Shard-preferential scheduling: with probability (1 - crossSample) the job
+ * comes from the node's home shard; otherwise from the whole queue. Either
+ * way the highest-priority ready job wins. Jobs whose `nextAttempt` is in
+ * the future are skipped (bounded scan, then fall through to the other pool
+ * so a throttled home shard doesn't stall the node).
+ */
+export async function getNextJob(
+  homeShard?: number,
+  crossSample = 0.25,
+): Promise<CrawlJob | null> {
   const database = await initDB();
-  const keys = await database.getAllKeys('crawled');
-  return new Set(keys);
-}
 
-export async function getNextJob(): Promise<CrawlJob | null> {
-  const database = await initDB();
-  const tx = database.transaction('queue', 'readonly');
-  const index = tx.store.index('by-priority');
-  const cursor = await index.openCursor(null, 'prev'); // Highest priority first
+  const tryIndex = async (useHome: boolean): Promise<CrawlJob | null> => {
+    const tx = database.transaction('queue', 'readonly');
+    const index = tx.store.index(useHome ? 'by-shard' : 'by-priority');
+    const direction = useHome ? 'next' : 'prev';
 
-  if (!cursor) return null;
+    if (useHome && homeShard === undefined) return null;
 
-  const job = cursor.value;
+    // Home shard: iterate its jobs and keep the highest-priority ready one.
+    // Global pool: priority order already; take the first ready job.
+    let best: CrawlJob | null = null;
+    let cursor = await index.openCursor(
+      useHome && homeShard !== undefined ? IDBKeyRange.only(homeShard) : null,
+      direction,
+    );
+    let scanned = 0;
+    while (cursor && scanned < 500) {
+      scanned++;
+      const job = cursor.value;
+      const ready = !job.nextAttempt || Date.now() >= job.nextAttempt;
+      if (ready) {
+        if (!useHome) return job; // by-priority is already ordered
+        if (!best || job.priority > best.priority) best = job;
+      }
+      cursor = await cursor.continue();
+    }
+    return best;
+  };
 
-  // Check if we should wait
-  if (job.nextAttempt && Date.now() < job.nextAttempt) {
-    return null;
+  const wantHome =
+    homeShard !== undefined && Math.random() >= crossSample;
+
+  if (wantHome) {
+    const home = await tryIndex(true);
+    if (home) return home;
   }
-
-  return job;
+  return tryIndex(false);
 }
 
 export async function removeFromQueue(url: string): Promise<void> {
@@ -97,6 +155,13 @@ export async function removeFromQueue(url: string): Promise<void> {
 export async function getQueueSize(): Promise<number> {
   const database = await initDB();
   return database.count('queue');
+}
+
+/** How many queued jobs belong to a shard (for the node UI). */
+export async function getQueueShardCount(shard: number): Promise<number> {
+  const database = await initDB();
+  const tx = database.transaction('queue', 'readonly');
+  return tx.store.index('by-shard').count(IDBKeyRange.only(shard));
 }
 
 export async function getCrawled(url: string) {
@@ -127,6 +192,13 @@ export async function getCrawledCount(): Promise<number> {
   return database.count('crawled');
 }
 
+/** Every URL that has already been crawled — for bulk dedup during seeding. */
+export async function getCrawledUrlSet(): Promise<Set<string>> {
+  const database = await initDB();
+  const keys = await database.getAllKeys('crawled');
+  return new Set(keys);
+}
+
 export async function getRecentCrawled(limit = 20) {
   const database = await initDB();
   const tx = database.transaction('crawled', 'readonly');
@@ -139,4 +211,50 @@ export async function getRecentCrawled(limit = 20) {
 export async function clearQueue(): Promise<void> {
   const database = await initDB();
   await database.clear('queue');
+}
+
+/* ------------------------------------------------------------------------ */
+/* Observation outbox (offline-first publishing)                             */
+/* ------------------------------------------------------------------------ */
+
+/** Hold a signed observation until relays are reachable again. */
+export async function enqueueOutbox(event: NostrEvent): Promise<void> {
+  const database = await initDB();
+  const count = await database.count('outbox');
+  if (count >= OUTBOX_MAX) return; // bound memory; re-crawl can reproduce it
+  await database.add('outbox', { event, queuedAt: Date.now() });
+}
+
+/** Number of observations waiting for relay connectivity. */
+export async function getOutboxSize(): Promise<number> {
+  const database = await initDB();
+  return database.count('outbox');
+}
+
+/**
+ * Drain the outbox through `publish`. Stops at the first failure so a dead
+ * network doesn't burn retries; entries are removed only after success.
+ * Returns how many were published.
+ */
+export async function flushOutbox(
+  publish: (event: NostrEvent) => Promise<boolean>,
+): Promise<number> {
+  const database = await initDB();
+  let published = 0;
+
+  for (;;) {
+    const tx = database.transaction('outbox', 'readonly');
+    const cursor = await tx.store.openCursor();
+    if (!cursor) break;
+    const key = cursor.primaryKey;
+    const { event } = cursor.value;
+
+    const ok = await publish(event);
+    if (!ok) break;
+
+    await database.delete('outbox', key);
+    published++;
+  }
+
+  return published;
 }

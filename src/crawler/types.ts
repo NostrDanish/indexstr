@@ -13,6 +13,11 @@ export interface CrawlJob {
    * Curated collections use this — the collection IS the crawl plan.
    */
   followLinks?: boolean;
+  /**
+   * Deterministic crawl-space shard (0–255, see sharding.ts). Assigned at
+   * enqueue time; the scheduler prefers the node's home shard.
+   */
+  shard?: number;
 }
 
 export interface ParsedPage {
@@ -60,6 +65,14 @@ export interface CrawlerStats {
   duplicates: number;
   /** Skipped for having almost no extractable text (JS-rendered SPAs). */
   thinContent: number;
+  /** Observations accepted by at least one relay (this session). */
+  published: number;
+  /** Signed observations held for relay reconnect (offline-first). */
+  outboxPending: number;
+  /** New URLs discovered from crawled pages (this session). */
+  discovered: number;
+  /** Queued jobs in this node's home shard, when known. */
+  homeShardJobs: number;
 }
 
 export interface CrawlerSettings {

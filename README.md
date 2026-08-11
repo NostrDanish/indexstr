@@ -4,9 +4,42 @@
   <img src="public/brand/logo.png" alt="Indexstr — a spider sitting in its web" width="192" height="192">
 </p>
 
-**The web, pre-indexed on Nostr.** Indexstr is a decentralized browser-based web indexer — a fork of [Crawlstr](https://github.com/NostrDanish/Crwalstr) that ships with **curated URL collections built in**, so there is something worth indexing from the very first click. No backend. No tracking. No accounts required.
+**Indexstr — the decentralized web indexing network.** Turn spare browser, mobile and desktop capacity into a censorship-resistant, Nostr-powered web index. A fork/evolution of [Crawlstr](https://github.com/NostrDanish/Crwalstr) that ships with **curated URL collections built in** and coordinates crawl work across nodes **without any central server**. No backend. No tracking. No accounts required.
 
 Load a collection, press **Start Crawling**, and every page becomes a **kind 39697 web index observation** on the shared [SIP-01](https://github.com/NostrDanish/SIP-01) index — instantly searchable by [0xSearchstr](https://0xsearchstr.shakespeare.wtf), [0xPresearchstr](https://presearchstr.shakespeare.wtf), [UNCAGED](https://uncaged.shakespeare.wtf), and any future SIP-01 compatible client.
+
+## A Network, Not Just a Crawler
+
+Crawlstr = *"let your browser crawl the web."*
+Indexstr = *"turn the community into a distributed indexing network."*
+
+```
+                INDEXSTR NETWORK
+                      │
+        ┌─────────────┼─────────────┐
+        │                           │
+   Seed sources               Nostr index
+   (modular providers)        (SIP-01 observations)
+        │                           │
+        ▼                           ▼
+  ┌───────────┐              ┌─────────────┐
+  │ Sharded   │              │  Search     │
+  │ work queue│              │  engines    │
+  └─────┬─────┘              └─────────────┘
+        │
+   ┌────┴─────┬──────────┐
+   ▼          ▼          ▼
+ Browser   Mobile     Desktop
+ node A    node B     node C
+ (shard C4)(shard 19)(shard A7)
+```
+
+- **Deterministic sharding** — every URL belongs to one of 256 shards; every node has a home shard derived from its indexer pubkey. Nodes prefer their own shard, so the community splits the crawl space instead of duplicating it. No coordinator, no registration — same seeds in, same assignment out.
+- **Node heartbeats (kind 16919)** — running nodes publish a small signed, privacy-minimal heartbeat (shard, coarse platform/network, counters). Querying recent heartbeats gives a local estimate of active indexers and shard coverage.
+- **Offline-first** — observations that can't reach any relay wait in a persistent outbox and flush on reconnect. Going offline loses nothing.
+- **Modular discovery** — seed sources implement a small `SeedProvider` interface (`src/crawler/providers.ts`); the bundled collections are just the first providers. RSS watchers, community seed lists, and dataset importers slot in without touching the crawler.
+
+Full protocol details: [NIP.md](NIP.md).
 
 ---
 
@@ -251,34 +284,49 @@ For unrestricted crawling, run a desktop/CLI SIP-01 crawler alongside Indexstr.
 ```
 src/
 ├── crawler/
-│   ├── engine.ts           ← Main crawler orchestrator (crawl loop, queue, scheduling)
-│   ├── queue.ts            ← IndexedDB persistent queue (survives restarts)
-│   ├── collections.ts      ← Curated collection registry + loader/cache
+│   ├── engine.ts           ← Node orchestrator (crawl loop, heartbeats, outbox, sharding)
+│   ├── queue.ts            ← IndexedDB queue + shard index + observation outbox
+│   ├── sharding.ts         ← Deterministic crawl-space sharding (FNV-1a, 256 shards)
+│   ├── capabilities.ts     ← Coarse, privacy-minimal node capability profile
+│   ├── heartbeat.ts        ← Kind 16919 node heartbeat (build/sign/parse)
+│   ├── providers.ts        ← SeedProvider abstraction (modular discovery sources)
+│   ├── collections.ts      ← Bundled collection registry + loader/cache
 │   ├── sqlite.ts           ← Minimal read-only SQLite parser (b-tree, records, overflow)
 │   ├── fetcher.ts          ← HTTP fetcher (CORS, timeout, size limits)
 │   ├── parser.ts           ← HTML parser (title, description, text, links, language)
 │   ├── hasher.ts           ← SHA-256 content hashing for local dedup
 │   ├── webIndex.ts         ← SIP-01: URL normalization, event build/parse (byte-compatible)
 │   ├── indexerIdentity.ts  ← Per-device anonymous indexer keypair
-│   ├── publisher.ts        ← Signs + publishes kind 39697 via finalizeEvent
+│   ├── publisher.ts        ← Kind 39697 signing/publishing + relay health
 │   ├── relays.ts           ← Ecosystem relay pool configuration
 │   ├── robots.ts           ← robots.txt parser with caching
 │   ├── limits.ts           ← Per-domain rate limiting
 │   └── types.ts            ← TypeScript interfaces
 ├── components/
 │   └── crawler/
-│       ├── CrawlerDashboard.tsx   ← Main UI (toggle, stats, tabs)
+│       ├── CrawlerDashboard.tsx   ← Node UI (toggle, shard, stats, relay health, tabs)
 │       ├── CollectionsPanel.tsx   ← Bundled collection cards + load/progress
 │       └── IndexstrLogo.tsx       ← Brand mark
 ├── hooks/
-│   └── useCrawler.ts       ← React hook wiring engine to Nostr
+│   ├── useCrawler.ts       ← React hook wiring engine to Nostr
+│   └── useNetworkNodes.ts  ← Active-indexer estimate from kind 16919 heartbeats
 ├── pages/
 │   └── Index.tsx           ← Landing page + dashboard
-└── NIP.md                  ← Protocol documentation
+└── NIP.md                  ← Protocol documentation (39697 + 16919 + sharding)
 
 public/
 └── collections/            ← Bundled SQLite URL collections (loaded on demand)
 ```
+
+## Roadmap
+
+The node core is live. Next phases, in order of value:
+
+1. **Reputation derivation** — search-side scoring from signed observations (independent count, freshness, agreement). Heartbeats stay self-reported health metadata, never a trust input.
+2. **Freshness scheduling** — content-hash change detection driving per-URL recrawl intervals (news → hours, static → weeks).
+3. **Community seed lists over Nostr** — a `SeedProvider` that loads curated URL lists published as Nostr events, so the community extends discovery without shipping app updates.
+4. **Headless core extraction** — the `src/crawler` module is already UI-free; packaging it for CLI/VPS nodes (with a real fetch stack instead of the CORS proxy) multiplies network capacity.
+5. **Smarter priority** — pluggable scoring (freshness, discovery frequency, change rate, crawl cost) replacing the current fixed priorities.
 
 ---
 

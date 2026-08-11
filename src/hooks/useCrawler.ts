@@ -1,10 +1,13 @@
 // React hook for the crawler engine
-// Wires up SIP-01 publishing via Nostr relays
+// Wires up SIP-01 publishing + node heartbeats via Nostr relays
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNostr } from '@nostrify/react';
-import { CrawlerEngine } from '@/crawler/engine';
-import { setRelayPublisher, getIndexerInfo } from '@/crawler/publisher';
+import type { NostrEvent } from '@nostrify/nostrify';
+import { CrawlerEngine, setEngineRelayPublisher } from '@/crawler/engine';
+import { setRelayPublisher, getIndexerInfo, type RelayHealth } from '@/crawler/publisher';
+import { shardLabel } from '@/crawler/sharding';
+import type { NodeCapabilities } from '@/crawler/capabilities';
 import type { CrawlerStats, CrawlerSettings } from '@/crawler/types';
 
 export function useCrawler() {
@@ -25,6 +28,10 @@ export function useCrawler() {
     fetchFailed: 0,
     duplicates: 0,
     thinContent: 0,
+    published: 0,
+    outboxPending: 0,
+    discovered: 0,
+    homeShardJobs: 0,
   });
   const [recentCrawls, setRecentCrawls] = useState<Array<{
     url: string;
@@ -32,6 +39,8 @@ export function useCrawler() {
     crawledAt: number;
   }>>([]);
   const [indexerInfo, setIndexerInfo] = useState<{ pubkeyHex: string; npub: string } | null>(null);
+  const [homeShard, setHomeShard] = useState<number | null>(null);
+  const [capabilities, setCapabilities] = useState<NodeCapabilities | null>(null);
 
   // Initialize engine and indexer identity
   useEffect(() => {
@@ -41,6 +50,8 @@ export function useCrawler() {
       setInitialized(true);
       setStats(engine.getStats());
       setIndexerInfo(getIndexerInfo());
+      setHomeShard(engine.homeShard);
+      void engine.getCapabilities().then(setCapabilities);
     });
 
     engine.onStats((newStats) => {
@@ -54,15 +65,19 @@ export function useCrawler() {
 
   // Wire up relay publishing. Each crawl observation is pushed to every relay
   // in the index publish set via a targeted per-relay connection — the crawler
-  // list is authoritative, not merely decorative.
+  // list is authoritative, not merely decorative. The same transport carries
+  // the node's heartbeat events.
   useEffect(() => {
-    setRelayPublisher(async (relayUrl, event) => {
+    const publish = async (relayUrl: string, event: NostrEvent) => {
       try {
         await nostr.relay(relayUrl).event(event, { signal: AbortSignal.timeout(10000) });
       } catch (error) {
         console.debug(`[Crawler] Publish failed for ${relayUrl}:`, error);
+        throw error; // publisher tracks per-relay health on failure
       }
-    });
+    };
+    setRelayPublisher(publish);
+    setEngineRelayPublisher(publish);
   }, [nostr]);
 
   // Poll recent crawls
@@ -121,7 +136,7 @@ export function useCrawler() {
       wifiOnly: false,
       chargingOnly: false,
       respectRobots: true,
-      maxBandwidthMB: 25,
+      maxBandwidthMB: 250,
       maxPagesPerHour: 100,
       maxDepth: 3,
       maxConcurrent: 1,
@@ -130,12 +145,21 @@ export function useCrawler() {
     };
   }, []);
 
+  const getRelayHealth = useCallback((): Record<string, RelayHealth> => {
+    return engineRef.current?.getRelayHealth() ?? {};
+  }, []);
+
   return {
     isRunning,
     initialized,
     stats,
     recentCrawls,
     indexerInfo,
+    /** This node's deterministic home shard (0–255). */
+    homeShard,
+    /** e.g. "A7" */
+    homeShardLabel: homeShard === null ? null : shardLabel(homeShard),
+    capabilities,
     start,
     stop,
     seedUrl,
@@ -143,5 +167,6 @@ export function useCrawler() {
     clearAll,
     updateSettings,
     getSettings,
+    getRelayHealth,
   };
 }

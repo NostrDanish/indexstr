@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Play,
   Square,
@@ -18,6 +18,9 @@ import {
   Key,
   Copy,
   Check,
+  Users,
+  Send,
+  Radio,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -49,6 +52,7 @@ import {
 import { IndexstrLogo } from '@/components/crawler/IndexstrLogo';
 import { CollectionsPanel } from '@/components/crawler/CollectionsPanel';
 import { useCrawler } from '@/hooks/useCrawler';
+import { useNetworkNodes } from '@/hooks/useNetworkNodes';
 import { cn } from '@/lib/utils';
 
 function formatBytes(bytes: number): string {
@@ -87,6 +91,8 @@ export function CrawlerDashboard() {
     stats,
     recentCrawls,
     indexerInfo,
+    homeShardLabel,
+    capabilities,
     start,
     stop,
     seedUrl,
@@ -94,7 +100,10 @@ export function CrawlerDashboard() {
     clearAll,
     updateSettings,
     getSettings,
+    getRelayHealth,
   } = useCrawler();
+
+  const network = useNetworkNodes(initialized);
 
   const [seedInput, setSeedInput] = useState('');
   const [copied, setCopied] = useState(false);
@@ -242,35 +251,80 @@ export function CrawlerDashboard() {
         </Card>
       )}
 
-      {/* Indexer Identity Card */}
+      {/* Indexstr Node Card — identity, shard, capabilities, network view */}
       {indexerInfo && (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent className="pt-6 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
                   <Key className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">Indexer Identity (SIP-01)</p>
+                  <p className="text-sm font-medium">Indexstr Node</p>
                   <p className="text-xs text-muted-foreground font-mono truncate">
                     {indexerInfo.npub}
                   </p>
                 </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={copyNpub}
-                className="shrink-0"
-              >
-                {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                {homeShardLabel && (
+                  <Badge variant="outline" className="font-mono text-primary border-primary/40">
+                    Shard {homeShardLabel}
+                  </Badge>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={copyNpub}
+                >
+                  {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Per-device pseudonymous keypair. Signs kind 39697 observations.
-              Separate from your personal Nostr identity.
+
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {capabilities && (
+                <span>
+                  {capabilities.platform}
+                  {' · '}
+                  {capabilities.network}
+                  {capabilities.charging ? ' · charging' : ''}
+                </span>
+              )}
+              <span>
+                home queue: {stats.homeShardJobs.toLocaleString()} URL
+                {stats.homeShardJobs !== 1 ? 's' : ''}
+              </span>
+              {stats.outboxPending > 0 && (
+                <span className="text-chart-4">
+                  {stats.outboxPending.toLocaleString()} observation
+                  {stats.outboxPending !== 1 ? 's' : ''} held for relay reconnect
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Per-device pseudonymous keypair signs kind 39697 observations — separate from your
+              personal Nostr identity. Your home shard is derived from it, so the network splits
+              crawl work deterministically with no coordinator.
             </p>
+
+            {network.data && network.data.activeIndexers > 0 && (
+              <div className="flex items-center gap-2 rounded-lg bg-primary/5 border border-primary/20 px-3 py-2">
+                <Users className="h-3.5 w-3.5 text-primary shrink-0" />
+                <p className="text-xs">
+                  <span className="font-medium text-primary">
+                    {network.data.activeIndexers} active indexer
+                    {network.data.activeIndexers !== 1 ? 's' : ''}
+                  </span>{' '}
+                  <span className="text-muted-foreground">
+                    across {network.data.activeShards}/256 shards — local estimate from your relays
+                    (1h window)
+                  </span>
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -302,22 +356,24 @@ export function CrawlerDashboard() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Zap className="h-4 w-4" />
-              <span className="text-xs font-medium">Bandwidth</span>
+              <Send className="h-4 w-4" />
+              <span className="text-xs font-medium">Published</span>
             </div>
-            <div className="text-2xl font-bold">{formatBytes(stats.bandwidthUsed)}</div>
-            <p className="text-xs text-muted-foreground">used</p>
+            <div className="text-2xl font-bold">{stats.published.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              observations{stats.outboxPending > 0 ? ` · ${stats.outboxPending} held` : ''}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Globe className="h-4 w-4" />
-              <span className="text-xs font-medium">Protocol</span>
+              <Zap className="h-4 w-4" />
+              <span className="text-xs font-medium">Bandwidth</span>
             </div>
-            <div className="text-2xl font-bold">SIP-01</div>
-            <p className="text-xs text-muted-foreground">kind 39697</p>
+            <div className="text-2xl font-bold">{formatBytes(stats.bandwidthUsed)}</div>
+            <p className="text-xs text-muted-foreground">used</p>
           </CardContent>
         </Card>
       </div>
@@ -589,6 +645,12 @@ export function CrawlerDashboard() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <Separator />
+
+                {/* Relay health — observations are pushed to every relay in
+                    the publish set; this shows who is accepting them. */}
+                <RelayHealthList getRelayHealth={getRelayHealth} isRunning={isRunning} />
               </div>
 
               <Separator />
@@ -633,6 +695,67 @@ export function CrawlerDashboard() {
           </Card>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/** Per-relay publish health, refreshed on a timer while the tab is open. */
+function RelayHealthList({
+  getRelayHealth,
+  isRunning,
+}: {
+  getRelayHealth: () => Record<string, { ok: number; fail: number; lastOk: number; lastError?: string }>;
+  isRunning: boolean;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((t) => t + 1), 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const health = getRelayHealth();
+  const entries = Object.entries(health);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Radio className="h-4 w-4 text-muted-foreground" />
+        <div>
+          <p className="text-sm font-medium leading-none">Relay Health</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Observations are pushed to every relay; failures are retried from the outbox.
+          </p>
+        </div>
+      </div>
+      {entries.length === 0 ? (
+        <p className="text-xs text-muted-foreground pl-6">
+          {isRunning
+            ? 'Waiting for the first publish attempts…'
+            : 'No relay activity yet — start the crawler to publish.'}
+        </p>
+      ) : (
+        <div className="space-y-1 pl-6">
+          {entries.map(([url, h]) => (
+            <div key={url} className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-mono text-muted-foreground truncate">
+                {url.replace(/^wss?:\/\//, '').replace(/\/$/, '')}
+              </span>
+              <span className="flex items-center gap-1.5 shrink-0">
+                {h.fail > 0 && h.lastOk < Date.now() - 60000 * 5 && h.ok === 0 ? (
+                  <span className="text-destructive">unreachable</span>
+                ) : h.fail > 0 ? (
+                  <span className="text-chart-4">flaky</span>
+                ) : (
+                  <span className="text-primary">ok</span>
+                )}
+                <span className="text-muted-foreground">
+                  {h.ok}✓ / {h.fail}✗
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

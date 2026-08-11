@@ -15,9 +15,85 @@ specification v1.1** — [github.com/NostrDanish/SIP-01](https://github.com/Nost
 | Schema | Kind | Type | Status |
 |--------|------|------|--------|
 | Web Index Observation (SIP-01) | **39697** | addressable | **Written** by Indexstr |
+| Indexstr Node Heartbeat | **16919** | replaceable | **Written** by Indexstr |
 
-Indexstr is a **pure SIP-01 publisher** — it only writes kind 39697 events.
-It does NOT write community submissions (kind 30078) or query caches.
+Indexstr is a **pure SIP-01 publisher** for observations — it does NOT write
+community submissions (kind 30078) or query caches. Kind 16919 is an
+Indexstr-specific coordination/health event documented below.
+
+## Deterministic Crawl Sharding (no coordinator)
+
+Every normalized URL maps to one of **256 shards**. Every node has a **home
+shard** derived from its indexer pubkey. Nodes prefer home-shard work, so a
+hundred nodes loading the same collection split it instead of duplicating it.
+
+```
+shard(url)  = fnv1a32_utf16(normalized_url) >> 24     // top byte → 0..255
+home(node)  = parseInt(indexer_pubkey_hex[0:2], 16)   // first pubkey byte
+```
+
+FNV-1a (specified here so any implementation can reproduce it):
+
+```
+hash := 2166136261                        // 0x811c9dc5
+for each UTF-16 code unit's low byte b (folding high byte for cp > 0xFF):
+    hash := (hash XOR b) * 16777619 mod 2^32
+shard := hash >> 24
+```
+
+Scheduling is **preferential, not exclusive**: a node picks home-shard jobs
+first but samples other shards with probability 0.25. Sparse network → full
+coverage; dense network → cross-shard work becomes bounded redundancy
+(independent observations — the SIP-01 confidence signal).
+
+The URL→shard hash deliberately is NOT SHA-256: sharding needs cheap,
+synchronous bulk computation (50k URLs at seed time) and uniform spread, not
+cryptographic identity — URL identity remains the SIP-01 `d` tag.
+
+## Kind 16919 — Indexstr Node Heartbeat
+
+A replaceable event (latest per pubkey) announcing "this node is alive and
+indexing". Published on crawler start and every 10 minutes while running.
+Consumers treat heartbeats older than **1 hour** as offline.
+
+```json
+{
+  "kind": 16919,
+  "pubkey": "<device indexer pubkey>",
+  "created_at": 1786250000,
+  "content": "{\"v\":\"1\",\"shard\":\"C4\",\"platform\":\"desktop\",\"network\":\"wifi-or-better\",\"charging\":true,\"stats\":{\"pagesIndexed\":1204,\"queueSize\":18311,\"published\":1198}}",
+  "tags": [
+    ["v", "1"],
+    ["shard", "C4"],
+    ["source", "indexstr/1"],
+    ["alt", "Indexstr node heartbeat: shard C4"]
+  ]
+}
+```
+
+**Tags:** `v` (node protocol version), `shard` (home shard, two uppercase hex
+chars), `source` (`indexstr/1`), `alt` (NIP-31 human-readable).
+
+**Content** (JSON): `v`, `shard`, coarse `platform` (`mobile`/`desktop`),
+coarse `network` class, `charging`, and self-reported `stats`
+(`pagesIndexed`, `queueSize`, `published`).
+
+**Privacy contract:** no location, no IP, no device model, no fine-grained
+fingerprint. Battery/network are deliberately coarse classes.
+
+**Trust contract:** heartbeats are *self-reported* — usable for network
+health/coverage estimates only. Reputation MUST be derived from signed
+kind 39697 observations (independent and comparable across indexers), never
+from heartbeat claims.
+
+**Querying (network estimate):**
+
+```json
+{ "kinds": [16919], "since": <now - 3600>, "limit": 500 }
+```
+
+Count distinct `pubkey` values. This is a local estimate bounded by the
+queried relays — never a global census.
 
 ## What Indexstr Writes
 
@@ -153,6 +229,15 @@ operators from spec §15 (`site:`, `title:`, `lang:`, `after:`, …):
 - Agreement across independent indexers (same `d`, different `pubkey`) is the
   ranking signal.
 - Indexstr is just one more independent indexer in the SIP-01 ecosystem.
+- Heartbeats (16919) are health metadata, not evidence: they carry a privacy
+  floor (coarse classes only) and no trust weight.
+
+## Offline-First Publishing
+
+Signed observations that reach zero relays are held in a local IndexedDB
+**outbox** (cap 5000) and re-published on reconnect, on crawler start, and
+every 5 minutes while running. A node going offline costs the network
+nothing, and the node loses no work.
 
 ## References
 

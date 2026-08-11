@@ -1,5 +1,10 @@
 // Main crawler engine — orchestrates the crawl loop
 // Publishes SIP-01 (kind 39697) web index observations via the shared protocol
+//
+// Indexstr is a *network node*: every job carries a deterministic shard
+// (sharding.ts), the scheduler prefers the node's home shard, heartbeats
+// (kind 16919) announce presence, and observations that can't reach any
+// relay wait in the IndexedDB outbox instead of being lost.
 
 import { fetchPage } from './fetcher';
 import { parsePage } from './parser';
@@ -7,7 +12,17 @@ import { normalizeIndexUrl } from './webIndex';
 import { hashContent } from './hasher';
 import { shouldCrawlUrl, getCrawlDelay } from './robots';
 import { canMakeRequest } from './limits';
-import { publishIndexObservation } from './publisher';
+import {
+  publishIndexObservation,
+  flushObservationOutbox,
+  getRelayHealth,
+  type RelayHealth,
+} from './publisher';
+import { buildHeartbeat, HEARTBEAT_INTERVAL_MS } from './heartbeat';
+import { getIndexerIdentity } from './indexerIdentity';
+import { urlShard, nodeShard, CROSS_SHARD_SAMPLING } from './sharding';
+import { getNodeCapabilities, type NodeCapabilities } from './capabilities';
+import { getIndexPublishRelays } from './relays';
 import {
   initDB,
   addToQueue,
@@ -15,6 +30,7 @@ import {
   getNextJob,
   removeFromQueue,
   getQueueSize,
+  getQueueShardCount,
   getCrawled,
   markCrawled,
   findByHash,
@@ -22,6 +38,7 @@ import {
   getCrawledUrlSet,
   getRecentCrawled,
   clearQueue,
+  getOutboxSize,
 } from './queue';
 import { DEFAULT_SETTINGS, type CrawlerStats, type CrawlerSettings, type CrawlJob } from './types';
 
@@ -43,6 +60,16 @@ function detectPlatform(host: string): string | undefined {
   return undefined;
 }
 
+/** Publishes a signed event to one relay; injected by the React layer. */
+export type EngineRelayPublish = (relayUrl: string, event: import('@nostrify/nostrify').NostrEvent) => Promise<void>;
+
+let engineRelayPublish: EngineRelayPublish | null = null;
+
+/** Wire the engine's heartbeat transport (same connection pool as observations). */
+export function setEngineRelayPublisher(fn: EngineRelayPublish): void {
+  engineRelayPublish = fn;
+}
+
 export class CrawlerEngine {
   private running = false;
   private startTime = 0;
@@ -60,9 +87,18 @@ export class CrawlerEngine {
     fetchFailed: 0,
     duplicates: 0,
     thinContent: 0,
+    published: 0,
+    outboxPending: 0,
+    discovered: 0,
+    homeShardJobs: 0,
   };
   private abortController: AbortController | null = null;
   private onStatsChange?: (stats: CrawlerStats) => void;
+  /** This node's home shard (0–255), derived from the indexer pubkey. */
+  readonly homeShard: number;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private outboxTimer: ReturnType<typeof setInterval> | null = null;
+  private onlineHandler: (() => void) | null = null;
 
   constructor(settings?: Partial<CrawlerSettings>) {
     const stored = localStorage.getItem('indexstr-settings');
@@ -71,12 +107,15 @@ export class CrawlerEngine {
       ...(stored ? JSON.parse(stored) : {}),
       ...settings,
     };
+    this.homeShard = nodeShard(getIndexerIdentity().pubkeyHex);
   }
 
   async init(): Promise<void> {
     await initDB();
     this.stats.queueSize = await getQueueSize();
     this.stats.pagesIndexed = await getCrawledCount();
+    this.stats.outboxPending = await getOutboxSize();
+    this.stats.homeShardJobs = await getQueueShardCount(this.homeShard);
   }
 
   onStats(callback: (stats: CrawlerStats) => void): void {
@@ -94,17 +133,75 @@ export class CrawlerEngine {
     this.startTime = Date.now();
     this.abortController = new AbortController();
     this.emitStats();
+
+    // Announce this node to the network, then keep the heartbeat fresh.
+    void this.publishHeartbeat();
+    this.heartbeatTimer = setInterval(() => void this.publishHeartbeat(), HEARTBEAT_INTERVAL_MS);
+
+    // Flush anything held from an offline period, now and periodically.
+    void this.flushOutbox();
+    this.outboxTimer = setInterval(() => void this.flushOutbox(), 5 * 60 * 1000);
+    this.onlineHandler = () => void this.flushOutbox();
+    window.addEventListener('online', this.onlineHandler);
+
     this.crawlLoop();
   }
 
   async stop(): Promise<void> {
     this.running = false;
     this.abortController?.abort();
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.outboxTimer) clearInterval(this.outboxTimer);
+    this.heartbeatTimer = null;
+    this.outboxTimer = null;
+    if (this.onlineHandler) {
+      window.removeEventListener('online', this.onlineHandler);
+      this.onlineHandler = null;
+    }
     this.emitStats();
   }
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  /** Coarse, privacy-minimal capability snapshot (battery/network/platform). */
+  getCapabilities(): Promise<NodeCapabilities> {
+    return getNodeCapabilities();
+  }
+
+  /** Per-relay publish health for the settings UI. */
+  getRelayHealth(): Record<string, RelayHealth> {
+    return getRelayHealth();
+  }
+
+  /** Sign and publish a kind 16919 heartbeat to the index relay pool. */
+  private async publishHeartbeat(): Promise<void> {
+    if (!engineRelayPublish) return;
+    try {
+      const event = await buildHeartbeat({
+        pagesIndexed: this.stats.pagesIndexed,
+        queueSize: this.stats.queueSize,
+        published: this.stats.published,
+      });
+      await Promise.allSettled(
+        getIndexPublishRelays().map((url) => engineRelayPublish!(url, event)),
+      );
+    } catch (error) {
+      console.debug('[Crawler] Heartbeat publish failed:', error);
+    }
+  }
+
+  /** Deliver held observations; update stats. */
+  private async flushOutbox(): Promise<void> {
+    try {
+      const delivered = await flushObservationOutbox();
+      if (delivered > 0) this.stats.published += delivered;
+      this.stats.outboxPending = await getOutboxSize();
+      this.emitStats();
+    } catch (error) {
+      console.debug('[Crawler] Outbox flush failed:', error);
+    }
   }
 
   getStats(): CrawlerStats {
@@ -128,8 +225,11 @@ export class CrawlerEngine {
       priority,
       depth: 0,
       attempts: 0,
+      followLinks: true, // manual seeds self-expand; collections don't
+      shard: urlShard(normalizedUrl),
     });
     this.stats.queueSize = await getQueueSize();
+    this.stats.homeShardJobs = await getQueueShardCount(this.homeShard);
     this.emitStats();
   }
 
@@ -153,10 +253,12 @@ export class CrawlerEngine {
         depth: 0,
         attempts: 0,
         followLinks: false,
+        shard: urlShard(url),
       });
     }
     await addManyToQueue(jobs, onProgress);
     this.stats.queueSize = await getQueueSize();
+    this.stats.homeShardJobs = await getQueueShardCount(this.homeShard);
     this.emitStats();
     return jobs.length;
   }
@@ -179,7 +281,9 @@ export class CrawlerEngine {
           continue;
         }
 
-        const job = await getNextJob();
+        // Shard-preferential scheduling: mostly home-shard work, with
+        // cross-shard sampling so sparse networks still cover everything.
+        const job = await getNextJob(this.homeShard, CROSS_SHARD_SAMPLING);
         if (!job) {
           await this.sleep(5000);
           continue;
@@ -278,9 +382,11 @@ export class CrawlerEngine {
 
     // Publish SIP-01 v1.1 observation to the shared index (kind 39697).
     // Canonical spec: https://github.com/NostrDanish/SIP-01
+    // When no relay accepts it, the event waits in the outbox — a dead
+    // network never costs the network an observation.
     const host = new URL(job.url).hostname;
     const platform = detectPlatform(host);
-    await publishIndexObservation({
+    const published = await publishIndexObservation({
       url: job.url,
       title: parsed.title,
       description: parsed.description,
@@ -293,11 +399,18 @@ export class CrawlerEngine {
       ...(platform ? { platform } : {}),
       type: platform === 'github' || platform === 'gitlab' ? 'repository' : 'page',
     });
+    if (published) {
+      if (published.delivered > 0) this.stats.published++;
+      this.stats.outboxPending = await getOutboxSize();
+    }
 
-    // Add discovered links to queue (collection-seeded jobs index the exact
-    // URL only — their crawl plan is already curated)
+    // Self-expanding index: discovered links enter the queue sharded like
+    // everything else, so organic growth is distributed across nodes too.
+    // (Collection-seeded jobs index the exact URL only — their crawl plan
+    // is already curated.)
     if (job.followLinks !== false && job.depth < this.settings.maxDepth) {
       const maxLinks = this.settings.ecoMode ? 5 : 10;
+      let added = 0;
       for (const link of parsed.links.slice(0, maxLinks)) {
         const normalized = normalizeIndexUrl(link);
         if (!normalized) continue;
@@ -311,9 +424,13 @@ export class CrawlerEngine {
           depth: job.depth + 1,
           discoveredFrom: job.url,
           attempts: 0,
+          shard: urlShard(normalized),
         });
+        added++;
       }
+      this.stats.discovered += added;
       this.stats.queueSize = await getQueueSize();
+      this.stats.homeShardJobs = await getQueueShardCount(this.homeShard);
     }
   }
 
