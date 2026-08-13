@@ -4,8 +4,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNostr } from '@nostrify/react';
 import type { NostrEvent } from '@nostrify/nostrify';
-import { CrawlerEngine, setEngineRelayPublisher } from '@/crawler/engine';
+import { CrawlerEngine, setEngineRelayPublisher, setNetworkQuerier } from '@/crawler/engine';
 import { setRelayPublisher, getIndexerInfo, type RelayHealth } from '@/crawler/publisher';
+import { SIP01_KIND } from '@/crawler/webIndex';
 import { shardLabel } from '@/crawler/sharding';
 import type { NodeCapabilities } from '@/crawler/capabilities';
 import type { CrawlerStats, CrawlerSettings } from '@/crawler/types';
@@ -32,11 +33,13 @@ export function useCrawler() {
     outboxPending: 0,
     discovered: 0,
     homeShardJobs: 0,
+    networkIntake: 0,
   });
   const [recentCrawls, setRecentCrawls] = useState<Array<{
     url: string;
     title: string;
     crawledAt: number;
+    topics?: string[];
   }>>([]);
   const [indexerInfo, setIndexerInfo] = useState<{ pubkeyHex: string; npub: string } | null>(null);
   const [homeShard, setHomeShard] = useState<number | null>(null);
@@ -78,6 +81,16 @@ export function useCrawler() {
     };
     setRelayPublisher(publish);
     setEngineRelayPublisher(publish);
+
+    // Network discovery intake transport: recent SIP-01 observations from
+    // the relay pool become candidate crawl work (other indexers' findings
+    // are this node's discovery feed).
+    setNetworkQuerier(async (since, limit) => {
+      return nostr.query(
+        [{ kinds: [SIP01_KIND], since, limit }],
+        { signal: AbortSignal.timeout(15000) },
+      );
+    });
   }, [nostr]);
 
   // Poll recent crawls

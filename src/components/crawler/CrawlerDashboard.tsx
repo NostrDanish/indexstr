@@ -296,6 +296,11 @@ export function CrawlerDashboard() {
                 home queue: {stats.homeShardJobs.toLocaleString()} URL
                 {stats.homeShardJobs !== 1 ? 's' : ''}
               </span>
+              {stats.networkIntake > 0 && (
+                <span>
+                  network discoveries: {stats.networkIntake.toLocaleString()}
+                </span>
+              )}
               {stats.outboxPending > 0 && (
                 <span className="text-chart-4">
                   {stats.outboxPending.toLocaleString()} observation
@@ -523,13 +528,18 @@ export function CrawlerDashboard() {
                             <span className="truncate">{page.url}</span>
                             <ExternalLink className="h-3 w-3 shrink-0" />
                           </a>
-                          <div className="flex items-center gap-2 mt-1">
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
                             <p className="text-xs text-muted-foreground">
                               {new Date(page.crawledAt).toLocaleString()}
                             </p>
                             <Badge variant="outline" className="text-xs">
                               kind 39697
                             </Badge>
+                            {page.topics?.slice(0, 3).map((topic) => (
+                              <Badge key={topic} variant="secondary" className="text-xs">
+                                {topic}
+                              </Badge>
+                            ))}
                           </div>
                         </div>
                       </div>

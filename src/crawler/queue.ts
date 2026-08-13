@@ -9,7 +9,7 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { NostrEvent } from '@nostrify/nostrify';
-import type { CrawlJob } from './types';
+import type { CrawlJob, CrawledRecord } from './types';
 
 interface CrawlerDB extends DBSchema {
   queue: {
@@ -19,12 +19,7 @@ interface CrawlerDB extends DBSchema {
   };
   crawled: {
     key: string;
-    value: {
-      url: string;
-      contentHash: string;
-      title: string;
-      crawledAt: number;
-    };
+    value: CrawledRecord;
     indexes: { 'by-hash': string };
   };
   outbox: {
@@ -102,12 +97,26 @@ export async function addManyToQueue(
  * way the highest-priority ready job wins. Jobs whose `nextAttempt` is in
  * the future are skipped (bounded scan, then fall through to the other pool
  * so a throttled home shard doesn't stall the node).
+ *
+ * Domain fairness: `avoidDomain` (the domain of the previously served job)
+ * is skipped when other work exists, so one domain with 10k queued URLs
+ * can't monopolize the crawler even though per-domain rate limits would
+ * eventually throttle it anyway.
  */
 export async function getNextJob(
   homeShard?: number,
   crossSample = 0.25,
+  avoidDomain?: string,
 ): Promise<CrawlJob | null> {
   const database = await initDB();
+
+  const jobDomain = (job: CrawlJob): string => {
+    try {
+      return new URL(job.url).hostname;
+    } catch {
+      return '';
+    }
+  };
 
   const tryIndex = async (useHome: boolean): Promise<CrawlJob | null> => {
     const tx = database.transaction('queue', 'readonly');
@@ -119,6 +128,7 @@ export async function getNextJob(
     // Home shard: iterate its jobs and keep the highest-priority ready one.
     // Global pool: priority order already; take the first ready job.
     let best: CrawlJob | null = null;
+    let deferred: CrawlJob | null = null; // ready but same-domain — fallback
     let cursor = await index.openCursor(
       useHome && homeShard !== undefined ? IDBKeyRange.only(homeShard) : null,
       direction,
@@ -129,12 +139,18 @@ export async function getNextJob(
       const job = cursor.value;
       const ready = !job.nextAttempt || Date.now() >= job.nextAttempt;
       if (ready) {
-        if (!useHome) return job; // by-priority is already ordered
-        if (!best || job.priority > best.priority) best = job;
+        const sameDomain = avoidDomain !== undefined && jobDomain(job) === avoidDomain;
+        if (!useHome) {
+          if (!sameDomain) return job; // by-priority is already ordered
+          deferred ??= job;
+        } else if (!best || job.priority > best.priority) {
+          if (!sameDomain) best = job;
+          else deferred ??= job;
+        }
       }
       cursor = await cursor.continue();
     }
-    return best;
+    return best ?? deferred;
   };
 
   const wantHome =
@@ -169,13 +185,38 @@ export async function getCrawled(url: string) {
   return database.get('crawled', url);
 }
 
-export async function markCrawled(url: string, contentHash: string, title: string): Promise<void> {
+/** True when a URL is already queued (exact key match). */
+export async function isQueued(url: string): Promise<boolean> {
+  const database = await initDB();
+  return (await database.getKey('queue', url)) !== undefined;
+}
+
+export interface MarkCrawledOptions {
+  topics?: string[];
+  /** When this URL becomes eligible for recrawl (freshness scheduling). */
+  recrawlDue?: number;
+  changeCount?: number;
+  unchangedStreak?: number;
+  lastChangedAt?: number;
+}
+
+export async function markCrawled(
+  url: string,
+  contentHash: string,
+  title: string,
+  options?: MarkCrawledOptions,
+): Promise<void> {
   const database = await initDB();
   await database.put('crawled', {
     url,
     contentHash,
     title,
     crawledAt: Date.now(),
+    ...(options?.topics?.length ? { topics: options.topics } : {}),
+    ...(options?.recrawlDue !== undefined ? { recrawlDue: options.recrawlDue } : {}),
+    ...(options?.changeCount !== undefined ? { changeCount: options.changeCount } : {}),
+    ...(options?.unchangedStreak !== undefined ? { unchangedStreak: options.unchangedStreak } : {}),
+    ...(options?.lastChangedAt !== undefined ? { lastChangedAt: options.lastChangedAt } : {}),
   });
 }
 

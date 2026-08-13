@@ -38,6 +38,10 @@ Indexstr = *"turn the community into a distributed indexing network."*
 - **Node heartbeats (kind 16919)** — running nodes publish a small signed, privacy-minimal heartbeat (shard, coarse platform/network, counters). Querying recent heartbeats gives a local estimate of active indexers and shard coverage.
 - **Offline-first** — observations that can't reach any relay wait in a persistent outbox and flush on reconnect. Going offline loses nothing.
 - **Modular discovery** — seed sources implement a small `SeedProvider` interface (`src/crawler/providers.ts`); the bundled collections are just the first providers. RSS watchers, community seed lists, and dataset importers slot in without touching the crawler.
+- **Enrichment layer** — every crawled page is classified deterministically: topics (controlled vocabulary, evidence-weighted, ≤8 per page) ride SIP-01 `t` tags, document type rides the `type` extension. No AI required; any node replaying the algorithm reproduces the tags, so classification agreement is verifiable.
+- **Network discovery intake** — while running, a node reads *other* indexers' kind 39697 observations and queues URLs it has never seen. Every crawler on the network becomes every other node's discovery sensor.
+- **Freshness scheduling** — crawled URLs recrawl on adaptive intervals (24h → doubling → 30d cap; change resets). Unchanged recrawls republish the same `d`/`x` with fresh `created_at`: the network's "still alive" signal.
+- **Abuse guards** — crawl-trap heuristics, per-domain discovery caps, 150k queue ceiling, per-domain rate limits, robots.txt.
 
 Full protocol details: [NIP.md](NIP.md).
 
@@ -284,11 +288,14 @@ For unrestricted crawling, run a desktop/CLI SIP-01 crawler alongside Indexstr.
 ```
 src/
 ├── crawler/
-│   ├── engine.ts           ← Node orchestrator (crawl loop, heartbeats, outbox, sharding)
+│   ├── engine.ts           ← Node orchestrator (crawl loop, heartbeats, outbox, intake)
 │   ├── queue.ts            ← IndexedDB queue + shard index + observation outbox
 │   ├── sharding.ts         ← Deterministic crawl-space sharding (FNV-1a, 256 shards)
 │   ├── capabilities.ts     ← Coarse, privacy-minimal node capability profile
 │   ├── heartbeat.ts        ← Kind 16919 node heartbeat (build/sign/parse)
+│   ├── enrich.ts           ← Enrichment: topic derivation + doc-type classification
+│   ├── freshness.ts        ← Adaptive recrawl scheduling (change-driven intervals)
+│   ├── traps.ts            ← Crawl-trap heuristics + per-domain intake guards
 │   ├── providers.ts        ← SeedProvider abstraction (modular discovery sources)
 │   ├── collections.ts      ← Bundled collection registry + loader/cache
 │   ├── sqlite.ts           ← Minimal read-only SQLite parser (b-tree, records, overflow)
@@ -320,13 +327,16 @@ public/
 
 ## Roadmap
 
-The node core is live. Next phases, in order of value:
+Live today: deterministic sharding, node heartbeats, offline outbox, enrichment (topics + doc types), network discovery intake, freshness scheduling, trap guards.
+
+Next phases, in order of value:
 
 1. **Reputation derivation** — search-side scoring from signed observations (independent count, freshness, agreement). Heartbeats stay self-reported health metadata, never a trust input.
-2. **Freshness scheduling** — content-hash change detection driving per-URL recrawl intervals (news → hours, static → weeks).
+2. **Sitemap-first discovery** — a `SeedProvider` that expands `robots.txt` → `sitemap.xml` → URL sets for cheap structured discovery.
 3. **Community seed lists over Nostr** — a `SeedProvider` that loads curated URL lists published as Nostr events, so the community extends discovery without shipping app updates.
 4. **Headless core extraction** — the `src/crawler` module is already UI-free; packaging it for CLI/VPS nodes (with a real fetch stack instead of the CORS proxy) multiplies network capacity.
-5. **Smarter priority** — pluggable scoring (freshness, discovery frequency, change rate, crawl cost) replacing the current fixed priorities.
+5. **Domain profiles** — aggregate per-domain metadata (topics, languages, feed presence) from this node's own observation history.
+6. **Shard leases** — if sparse-network coverage proves patchy, heartbeat-mediated shard claiming can sharpen the current statistical assignment. Preferential sharding already tolerates node churn without it.
 
 ---
 

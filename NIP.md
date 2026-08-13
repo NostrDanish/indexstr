@@ -143,8 +143,71 @@ public metadata."*
 | Tag | Value | Meaning |
 |-----|-------|---------|
 | `network` | always `clearnet` | A browser crawler can only reach the clearnet |
-| `type` | `page` / `repository` | `repository` for GitHub/GitLab hosts, else `page` |
+| `type` | `page` / `article` / `blog` / `news` / `docs` / `wiki` / `forum` / `repository` / `product` / `video` / `audio` / `homepage` | Derived document type (see Enrichment) |
 | `platform` | e.g. `github`, `youtube`, `wikipedia` | Emitted for well-known hosts only |
+
+## Enrichment (derived `t` topics + `type`)
+
+Crawlstr says *"I found this."* Indexstr says *"I verified, classified and
+enriched this."* Enrichment rides the **existing SIP-01 slots** — topics in
+`t`, document type in `type` — so events stay byte-compatible with every
+SIP-01 consumer. No new kind, no schema break, no evidence payloads on the
+wire.
+
+**Deterministic classification.** Topics come from a controlled vocabulary
+(~70 canonical topics with aliases) matched against page evidence:
+
+| Evidence | Weight |
+|----------|--------|
+| meta keywords (source claims) | ×3 |
+| `<title>` | ×3 |
+| h1/h2 headings | ×2 |
+| meta description | ×2 |
+| URL path | ×1 |
+
+A topic is emitted only at score ≥ 3 (a stray body mention never tags a
+page), max 8 per event, normalized to canonical lowercase-hyphenated form
+(`Bitcoin`/`BITCOIN` → `bitcoin`). No AI, no network calls, no external
+service: **two Indexstr nodes classifying the same page produce the same
+tags** — reproducibility IS the provenance story, and cross-node tag
+agreement is itself a verifiable confidence signal.
+
+Document type is classified from JSON-LD `@type` → `og:type` → URL-shape
+heuristics, in that order of strength. Weak evidence → plain `page`.
+
+**What is deliberately NOT on the event:** confidence scores, evidence
+lists, source-vs-derived tag splits. Those are derivable by replaying the
+documented algorithm; the event carries conclusions only.
+
+## Network Discovery Intake
+
+Indexstr consumes the shared index as a *discovery feed*: while running, a
+node queries recent kind 39697 events from its relay pool every 2 minutes
+and enqueues URLs it has never crawled — the Crawlstr→Indexstr pipeline
+over Nostr with zero coupling between implementations.
+
+Intake jobs: priority 0.5, `followLinks: false` (the network points at
+pages; re-verification is this node's own crawl).
+
+Abuse guards on all discovered/intake URLs (never on curated collections):
+
+- crawl-trap filter (session keys, param explosions, segment loops,
+  counter paths, extreme depth — see `traps.ts`)
+- per-domain caps (200/domain intake, 500/domain link discovery)
+- 150k total queue ceiling
+- own-pubkey exclusion
+
+## Freshness / Recrawl Semantics
+
+Every successfully crawled URL is re-enqueued with `nextAttempt` at an
+adaptive interval: first crawl → 24h; unchanged recrawl → interval doubles
+(max 30d); changed content → back to 24h. Change detection = sha256 of
+extracted text.
+
+A recrawl **republishes** the observation even when content is unchanged:
+same `d`, same `x`, fresh `created_at` — per (indexer, URL) replaceable
+semantics this reads as *"still alive at this time"*, the network's
+freshness signal, at zero extra index space.
 
 **Key properties (same as all SIP-01 publishers):**
 

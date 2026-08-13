@@ -31,6 +31,32 @@ export interface ParsedPage {
   language: string;
   links: string[];
   wordCount: number;
+  /** Site-supplied keywords (meta[name=keywords]) — source evidence. */
+  keywords: string[];
+  /** og:type, lowercased (article, website, video.other, …). */
+  ogType?: string;
+  /** JSON-LD @type values found on the page. */
+  jsonLdTypes: string[];
+  /** First few h1/h2 headings — classification evidence. */
+  headings: string[];
+}
+
+/** A crawled-page record with freshness bookkeeping. */
+export interface CrawledRecord {
+  url: string;
+  contentHash: string;
+  title: string;
+  crawledAt: number;
+  /** Derived topics at last crawl (for the History UI). */
+  topics?: string[];
+  /** Unix ms — when the content hash last CHANGED. */
+  lastChangedAt?: number;
+  /** How often recrawls found changed content. */
+  changeCount?: number;
+  /** Consecutive recrawls with unchanged content. */
+  unchangedStreak?: number;
+  /** Unix ms — when this URL becomes eligible for recrawl. */
+  recrawlDue?: number;
 }
 
 export interface CrawlResult {
@@ -73,6 +99,8 @@ export interface CrawlerStats {
   discovered: number;
   /** Queued jobs in this node's home shard, when known. */
   homeShardJobs: number;
+  /** URLs taken in from other indexers' network observations (this session). */
+  networkIntake: number;
 }
 
 export interface CrawlerSettings {

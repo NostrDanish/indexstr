@@ -8,7 +8,7 @@
 
 import { fetchPage } from './fetcher';
 import { parsePage } from './parser';
-import { normalizeIndexUrl } from './webIndex';
+import { normalizeIndexUrl, SIP01_KIND } from './webIndex';
 import { hashContent } from './hasher';
 import { shouldCrawlUrl, getCrawlDelay } from './robots';
 import { canMakeRequest } from './limits';
@@ -23,6 +23,9 @@ import { getIndexerIdentity } from './indexerIdentity';
 import { urlShard, nodeShard, CROSS_SHARD_SAMPLING } from './sharding';
 import { getNodeCapabilities, type NodeCapabilities } from './capabilities';
 import { getIndexPublishRelays } from './relays';
+import { enrichPage } from './enrich';
+import { nextFreshness } from './freshness';
+import { isLikelyCrawlTrap, DomainIntakeGuard } from './traps';
 import {
   initDB,
   addToQueue,
@@ -39,8 +42,33 @@ import {
   getRecentCrawled,
   clearQueue,
   getOutboxSize,
+  isQueued,
 } from './queue';
 import { DEFAULT_SETTINGS, type CrawlerStats, type CrawlerSettings, type CrawlJob } from './types';
+import type { NostrEvent } from '@nostrify/nostrify';
+
+/** Never let the local queue grow past this — abuse resistance ceiling. */
+const MAX_QUEUE_SIZE = 150_000;
+
+/** How often this node pulls network observations for URL discovery. */
+const NETWORK_INTAKE_INTERVAL_MS = 120_000;
+
+/** Per-domain caps for discovered/intake URLs (collections are exempt). */
+const DISCOVERY_DOMAIN_CAP = 500;
+const INTAKE_DOMAIN_CAP = 200;
+
+/**
+ * Queries recent kind 39697 events from the relay pool; injected by the
+ * React layer (engine has no Nostr connection of its own).
+ */
+export type NetworkObservationQuery = (since: number, limit: number) => Promise<NostrEvent[]>;
+
+let networkQueryFn: NetworkObservationQuery | null = null;
+
+/** Wire the network discovery intake transport. */
+export function setNetworkQuerier(fn: NetworkObservationQuery): void {
+  networkQueryFn = fn;
+}
 
 /**
  * Map well-known hosts to SIP-01 §9.2 `platform` extension values.
@@ -91,6 +119,7 @@ export class CrawlerEngine {
     outboxPending: 0,
     discovered: 0,
     homeShardJobs: 0,
+    networkIntake: 0,
   };
   private abortController: AbortController | null = null;
   private onStatsChange?: (stats: CrawlerStats) => void;
@@ -99,6 +128,14 @@ export class CrawlerEngine {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private outboxTimer: ReturnType<typeof setInterval> | null = null;
   private onlineHandler: (() => void) | null = null;
+  private intakeTimer: ReturnType<typeof setInterval> | null = null;
+  /** Newest network-observation timestamp processed (unix seconds). */
+  private lastIntakeTs = 0;
+  /** Per-domain intake guards (session-scoped; collections bypass them). */
+  private discoveryGuard = new DomainIntakeGuard(DISCOVERY_DOMAIN_CAP);
+  private intakeGuard = new DomainIntakeGuard(INTAKE_DOMAIN_CAP);
+  /** Domain of the previously crawled job — for fair scheduling. */
+  private lastDomain = '';
 
   constructor(settings?: Partial<CrawlerSettings>) {
     const stored = localStorage.getItem('indexstr-settings');
@@ -144,6 +181,13 @@ export class CrawlerEngine {
     this.onlineHandler = () => void this.flushOutbox();
     window.addEventListener('online', this.onlineHandler);
 
+    // Network discovery intake: other indexers' observations are discovery
+    // signals. First poll after a short settle, then every 2 minutes.
+    this.intakeTimer = setInterval(() => void this.networkIntake(), NETWORK_INTAKE_INTERVAL_MS);
+    setTimeout(() => {
+      if (this.running) void this.networkIntake();
+    }, 15_000);
+
     this.crawlLoop();
   }
 
@@ -152,8 +196,10 @@ export class CrawlerEngine {
     this.abortController?.abort();
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.outboxTimer) clearInterval(this.outboxTimer);
+    if (this.intakeTimer) clearInterval(this.intakeTimer);
     this.heartbeatTimer = null;
     this.outboxTimer = null;
+    this.intakeTimer = null;
     if (this.onlineHandler) {
       window.removeEventListener('online', this.onlineHandler);
       this.onlineHandler = null;
@@ -201,6 +247,75 @@ export class CrawlerEngine {
       this.emitStats();
     } catch (error) {
       console.debug('[Crawler] Outbox flush failed:', error);
+    }
+  }
+
+  /**
+   * Network discovery intake — the Crawlstr→Indexstr pipeline over Nostr.
+   *
+   * Other indexers' kind 39697 observations are discovery signals: every
+   * observed URL we haven't crawled and don't already queue becomes a
+   * low-priority candidate job (followLinks: false — the network points at
+   * pages; our own crawlers decide what's worth re-verifying).
+   *
+   * Zero coupling: no Crawlstr code, no central API — just SIP-01 events
+   * any relay pool already carries. Abuse guards: trap filter, per-domain
+   * cap, total-queue ceiling, own-pubkey exclusion.
+   */
+  private async networkIntake(): Promise<void> {
+    if (!networkQueryFn || !this.running) return;
+
+    try {
+      const queueSize = await getQueueSize();
+      if (queueSize >= MAX_QUEUE_SIZE) return;
+
+      // Overlap the window by 10 min so slow-arriving events aren't missed.
+      const since = this.lastIntakeTs > 0
+        ? this.lastIntakeTs - 600
+        : Math.floor(Date.now() / 1000) - 600;
+
+      const events = await networkQueryFn(since, 250);
+      const ownPubkey = getIndexerIdentity().pubkeyHex;
+      const crawled = await getCrawledUrlSet();
+
+      let newest = this.lastIntakeTs;
+      let accepted = 0;
+
+      for (const event of events) {
+        if (event.pubkey === ownPubkey) continue;
+        if (event.kind !== SIP01_KIND) continue;
+        if (event.created_at > newest) newest = event.created_at;
+
+        const rawUrl = event.tags.find(([name]) => name === 'u')?.[1];
+        if (!rawUrl) continue;
+        const normalized = normalizeIndexUrl(rawUrl);
+        if (!normalized) continue;
+        if (crawled.has(normalized)) continue;
+        if (isLikelyCrawlTrap(normalized)) continue;
+        if (!this.intakeGuard.allow(normalized)) continue;
+        if (await isQueued(normalized)) continue;
+
+        await addToQueue({
+          url: normalized,
+          priority: 0.5,
+          depth: 0,
+          attempts: 0,
+          followLinks: false,
+          discoveredFrom: 'nostr:network',
+          shard: urlShard(normalized),
+        });
+        accepted++;
+      }
+
+      this.lastIntakeTs = Math.max(newest, Math.floor(Date.now() / 1000) - 600);
+      if (accepted > 0) {
+        this.stats.networkIntake += accepted;
+        this.stats.queueSize = await getQueueSize();
+        this.stats.homeShardJobs = await getQueueShardCount(this.homeShard);
+        this.emitStats();
+      }
+    } catch (error) {
+      console.debug('[Crawler] Network intake failed:', error);
     }
   }
 
@@ -283,7 +398,8 @@ export class CrawlerEngine {
 
         // Shard-preferential scheduling: mostly home-shard work, with
         // cross-shard sampling so sparse networks still cover everything.
-        const job = await getNextJob(this.homeShard, CROSS_SHARD_SAMPLING);
+        // Domain fairness: avoid serving the same domain twice in a row.
+        const job = await getNextJob(this.homeShard, CROSS_SHARD_SAMPLING, this.lastDomain);
         if (!job) {
           await this.sleep(5000);
           continue;
@@ -297,6 +413,11 @@ export class CrawlerEngine {
         }
 
         await this.crawlUrl(job);
+        try {
+          this.lastDomain = new URL(job.url).hostname;
+        } catch {
+          this.lastDomain = '';
+        }
         this.emitStats();
 
         const crawlDelay = this.settings.respectRobots ? await getCrawlDelay(job.url) : 0;
@@ -311,9 +432,13 @@ export class CrawlerEngine {
   }
 
   private async crawlUrl(job: CrawlJob): Promise<void> {
-    // Check if already crawled
+    const now = Date.now();
+
+    // Freshness gate: a crawled URL is only re-crawled once its recrawl
+    // interval has elapsed. (Recrawl jobs carry nextAttempt = due time, so
+    // the queue's scheduler already filters most of these.)
     const existing = await getCrawled(job.url);
-    if (existing) {
+    if (existing && (existing.recrawlDue ?? Number.POSITIVE_INFINITY) > now) {
       await removeFromQueue(job.url);
       this.stats.skipped++;
       return;
@@ -340,7 +465,7 @@ export class CrawlerEngine {
       if (job.attempts >= 3) {
         await removeFromQueue(job.url);
       } else {
-        job.nextAttempt = Date.now() + Math.pow(2, job.attempts) * 60000;
+        job.nextAttempt = now + Math.pow(2, job.attempts) * 60000;
         await addToQueue(job);
       }
       return;
@@ -357,21 +482,42 @@ export class CrawlerEngine {
       return;
     }
 
-    // Hash content for local dedup
+    // Hash content for local dedup + change detection
     const localHash = await hashContent(parsed.text);
 
-    // Check for duplicate content locally
+    // Duplicate-content check — but the page's OWN previous hash is not a
+    // duplicate, it's an unchanged recrawl (freshness signal).
     const duplicate = await findByHash(localHash);
-    if (duplicate) {
+    if (duplicate && duplicate !== job.url) {
       await removeFromQueue(job.url);
       this.stats.skipped++;
       this.stats.duplicates++;
       return;
     }
+    const changed = !existing || existing.contentHash !== localHash;
 
-    // Mark as crawled locally
-    await markCrawled(job.url, localHash, parsed.title);
+    // Enrichment: derive topics + document type from page evidence.
+    // Deterministic — any Indexstr node produces the same tags for the
+    // same page, which is what makes them a verifiable network signal.
+    const enrichment = enrichPage(parsed, job.url);
+
+    // Freshness bookkeeping + recrawl scheduling
+    const freshness = nextFreshness(existing, changed, now);
+    await markCrawled(job.url, localHash, parsed.title, {
+      topics: enrichment.topics,
+      ...freshness,
+    });
     await removeFromQueue(job.url);
+    // Schedule the recrawl (low priority; scheduler holds it until due).
+    await addToQueue({
+      url: job.url,
+      priority: 0.3,
+      depth: job.depth,
+      attempts: 0,
+      followLinks: job.followLinks,
+      shard: job.shard ?? urlShard(job.url),
+      nextAttempt: freshness.recrawlDue,
+    });
 
     // Update stats
     this.stats.pagesIndexed++;
@@ -382,8 +528,9 @@ export class CrawlerEngine {
 
     // Publish SIP-01 v1.1 observation to the shared index (kind 39697).
     // Canonical spec: https://github.com/NostrDanish/SIP-01
-    // When no relay accepts it, the event waits in the outbox — a dead
-    // network never costs the network an observation.
+    // Recrawls republish even when unchanged: same d/x, fresh created_at —
+    // the network's "still alive" signal. When no relay accepts it, the
+    // event waits in the outbox — a dead network never costs an observation.
     const host = new URL(job.url).hostname;
     const platform = detectPlatform(host);
     const published = await publishIndexObservation({
@@ -397,7 +544,9 @@ export class CrawlerEngine {
       // Extension registry (spec §9.2): a browser crawler only ever sees clearnet.
       network: 'clearnet',
       ...(platform ? { platform } : {}),
-      type: platform === 'github' || platform === 'gitlab' ? 'repository' : 'page',
+      type: platform === 'github' || platform === 'gitlab' ? 'repository' : enrichment.docType,
+      // Enriched topic tags (spec §6 `t`) — the classification layer.
+      tags: enrichment.topics,
     });
     if (published) {
       if (published.delivered > 0) this.stats.published++;
@@ -417,6 +566,10 @@ export class CrawlerEngine {
 
         // Don't re-crawl same URL
         if (normalized === job.url) continue;
+
+        // Trap + domain guards: discovery must not explode the queue.
+        if (isLikelyCrawlTrap(normalized)) continue;
+        if (!this.discoveryGuard.allow(normalized)) continue;
 
         await addToQueue({
           url: normalized,
