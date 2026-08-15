@@ -3,7 +3,7 @@
 Indexstr is a **browser-based web indexer** (a [Crawlstr](https://github.com/NostrDanish/Crwalstr) fork)
 that ships with **curated URL collections** and publishes to the **shared SIP-01
 (Search Index Protocol) index** on Nostr. It implements the **canonical SIP-01
-specification v1.1** — [github.com/NostrDanish/SIP-01](https://github.com/NostrDanish/SIP-01)
+specification v1.2** — [github.com/NostrDanish/SIP-01](https://github.com/NostrDanish/SIP-01)
 (`public/spec/SIP-01.md`) — byte-compatibly with
 [0xSearchstr](https://github.com/NostrDanish/0xSearchstr),
 [0xPresearchstr](https://github.com/NostrDanish/0xPresearchstr),
@@ -55,6 +55,12 @@ cryptographic identity — URL identity remains the SIP-01 `d` tag.
 A replaceable event (latest per pubkey) announcing "this node is alive and
 indexing". Published on crawler start and every 10 minutes while running.
 Consumers treat heartbeats older than **1 hour** as offline.
+
+> This schema is now the **canonical heartbeat port** in the SIP-01 repo
+> (`src/lib/heartbeat.ts` — the spec site's dashboard consumes it read-only).
+> Parsers on both sides accept lowercase hex shards and normalize to
+> uppercase; readers collapse to the latest event per pubkey
+> (`dedupeHeartbeats`) before applying the TTL (`isNodeLive`).
 
 ```json
 {
@@ -304,7 +310,8 @@ nothing, and the node loses no work.
 
 ## References
 
-- **Canonical spec (v1.1):** [NostrDanish/SIP-01](https://github.com/NostrDanish/SIP-01) — `public/spec/SIP-01.md`
+- **Canonical spec (v1.2):** [NostrDanish/SIP-01](https://github.com/NostrDanish/SIP-01) — `public/spec/SIP-01.md`
+  (v1.2 was a NIP-reference audit; the wire format is unchanged and `v` stays `"1"`)
 - **Implementation guide:** [SIP-01/docs/IMPLEMENTATION-GUIDE.md](https://github.com/NostrDanish/SIP-01/blob/main/docs/IMPLEMENTATION-GUIDE.md)
 - **Reference port:** [SIP-01/src/lib/sip01-utils.ts](https://github.com/NostrDanish/SIP-01/blob/main/src/lib/sip01-utils.ts)
 - **0xSearchstr NIP.md:** [legacy schemas, community submissions, Nostra interop](https://github.com/NostrDanish/0xSearchstr/blob/main/NIP.md)

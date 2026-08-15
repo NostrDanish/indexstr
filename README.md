@@ -215,7 +215,7 @@ Indexstr publishes **SIP-01 (Search Index Protocol)** events — the same protoc
 | `type` | Extension registry — `repository` for GitHub/GitLab, else `page` |
 | `alt` | Human-readable description (the `alt` convention, spec §12.3) |
 
-Full schema documentation: [NIP.md](NIP.md) · Canonical spec: [SIP-01 v1.1](https://github.com/NostrDanish/SIP-01/blob/main/public/spec/SIP-01.md)
+Full schema documentation: [NIP.md](NIP.md) · Canonical spec: [SIP-01 v1.2](https://github.com/NostrDanish/SIP-01/blob/main/public/spec/SIP-01.md)
 
 ### Relay Pool
 
@@ -344,7 +344,8 @@ Next phases, in order of value:
 
 | Project | Role | URL |
 |---------|------|-----|
-| **Indexstr** (this) | Browser indexer w/ collections → SIP-01 publisher | — |
+| **Indexstr** (this) | Browser indexer w/ collections → SIP-01 publisher | [github.com/NostrDanish/indexstr](https://github.com/NostrDanish/indexstr) |
+| [SIP-01](https://github.com/NostrDanish/SIP-01) | Canonical spec + explorer (consumes our kind 16919 heartbeats) | — |
 | [Crawlstr](https://github.com/NostrDanish/Crwalstr) | The original browser crawler | [crawlstr.shakespeare.wtf](https://crawlstr.shakespeare.wtf) |
 | [0xSearchstr](https://github.com/NostrDanish/0xSearchstr) | Search engine → SIP-01 reader | [0xsearchstr.shakespeare.wtf](https://0xsearchstr.shakespeare.wtf) |
 | [0xPresearchstr](https://github.com/NostrDanish/0xPresearchstr) | Community fork with keyword staking | [presearchstr.shakespeare.wtf](https://presearchstr.shakespeare.wtf) |

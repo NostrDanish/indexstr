@@ -92,3 +92,61 @@ describe('contentHash', () => {
     expect(await contentHash('Title', 'Other')).not.toBe(hash);
   });
 });
+
+/**
+ * Rule zero: byte-compatibility. The exact §13 test vectors from the
+ * canonical spec (v1.2) — if these pass, our events deduplicate against
+ * every other implementation in the ecosystem (0xSearchstr, UNCAGED-ENGINE,
+ * Crawlstr, UNCAGED Index Relay).
+ */
+describe('SIP-01 §13 test vectors (exact hashes)', () => {
+  const D_VECTORS = [
+    {
+      input: 'https://example.com/',
+      normalized: 'https://example.com/',
+      d: 'widx:0f115db062b7c0dd030b16878c99dea5',
+    },
+    {
+      input: 'HTTPS://WWW.Example.Com:443/page/?b=2&utm_source=x&a=1#top',
+      normalized: 'https://example.com/page?a=1&b=2',
+      d: 'widx:f68176b3eb966bd682c3c6eadcc5fe44',
+    },
+    {
+      input: 'https://example.com/page',
+      normalized: 'https://example.com/page',
+      d: 'widx:3641c5f2274c5471278ab5bf1df6d185',
+    },
+    {
+      input: 'https://github.com/NostrDanish/Crwalstr',
+      normalized: 'https://github.com/NostrDanish/Crwalstr',
+      d: 'widx:cdfd4df8c01d609fc9cdf943afa80197',
+    },
+  ];
+
+  test.each(D_VECTORS)('normalizes %s byte-identically', ({ input, normalized }) => {
+    expect(normalizeIndexUrl(input)).toBe(normalized);
+  });
+
+  test.each(D_VECTORS)('derives the exact d tag for %s', async ({ input, d }) => {
+    const normalized = normalizeIndexUrl(input);
+    expect(normalized).not.toBeNull();
+    expect(await documentId(normalized!)).toBe(d);
+  });
+
+  const X_VECTORS = [
+    {
+      title: 'Example',
+      description: '',
+      x: 'e1762f14d9924e37b32f1c81dfd256410af462f5136415c96877efa8c80345d0',
+    },
+    {
+      title: 'Example Page',
+      description: 'A page about examples.',
+      x: '2a5cbdf44513f552fb571d6c6de2ddf16c5452b235cc887980b52898fb38e7c1',
+    },
+  ];
+
+  test.each(X_VECTORS)('derives the exact x tag for "$title"', async ({ title, description, x }) => {
+    expect(await contentHash(title, description)).toBe(x);
+  });
+});

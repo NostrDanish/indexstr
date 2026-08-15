@@ -11,8 +11,8 @@ import { useNostr } from '@nostrify/react';
 import {
   INDEXSTR_HEARTBEAT_KIND,
   HEARTBEAT_TTL_S,
-  parseHeartbeat,
-  type ParsedHeartbeat,
+  dedupeHeartbeats,
+  isNodeLive,
 } from '@/crawler/heartbeat';
 
 export interface NetworkNodesResult {
@@ -33,24 +33,20 @@ export function useNetworkNodes(enabled = true) {
     refetchInterval: 60_000,
     staleTime: 30_000,
     queryFn: async ({ signal }) => {
-      const since = Math.floor(Date.now() / 1000) - HEARTBEAT_TTL_S;
+      // A slightly wider window than the TTL, then liveness is decided by
+      // isNodeLive on the deduped latest-per-node heartbeat (replaceable
+      // kind semantics can return stale versions from slow relays).
+      const since = Math.floor(Date.now() / 1000) - HEARTBEAT_TTL_S * 2;
       const events = await nostr.query(
         [{ kinds: [INDEXSTR_HEARTBEAT_KIND], since, limit: 500 }],
         { signal },
       );
 
-      const pubkeys = new Set<string>();
-      const shards = new Set<string>();
-      for (const event of events) {
-        const parsed: ParsedHeartbeat | null = parseHeartbeat(event);
-        if (!parsed) continue;
-        pubkeys.add(parsed.pubkey);
-        shards.add(parsed.shard);
-      }
+      const live = dedupeHeartbeats(events).filter((hb) => isNodeLive(hb));
 
       return {
-        activeIndexers: pubkeys.size,
-        activeShards: shards.size,
+        activeIndexers: live.length,
+        activeShards: new Set(live.map((hb) => hb.shard)).size,
         sampledAt: Date.now(),
       };
     },

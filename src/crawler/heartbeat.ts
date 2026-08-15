@@ -48,6 +48,8 @@ export interface HeartbeatPayload {
 export interface ParsedHeartbeat extends HeartbeatPayload {
   pubkey: string;
   createdAt: number;
+  /** Indexer software id from the `source` tag, when present. */
+  source?: string;
 }
 
 /** Build and sign this node's heartbeat. */
@@ -80,19 +82,23 @@ export async function buildHeartbeat(stats: HeartbeatStats): Promise<NostrEvent>
   return finalizeEvent(template, getIndexerSecretKey());
 }
 
-/** Structural validation for incoming heartbeats. */
+/**
+ * Structural validation for incoming heartbeats. Aligned with the canonical
+ * port in the SIP-01 repo (src/lib/heartbeat.ts): lowercase hex shards are
+ * accepted and normalized to uppercase; `source` is read from the tags.
+ */
 export function parseHeartbeat(event: NostrEvent): ParsedHeartbeat | null {
   if (event.kind !== INDEXSTR_HEARTBEAT_KIND) return null;
   try {
     const payload = JSON.parse(event.content) as Partial<HeartbeatPayload>;
     const shard = payload.shard;
-    if (typeof shard !== 'string' || !/^[0-9A-F]{2}$/.test(shard)) return null;
+    if (typeof shard !== 'string' || !/^[0-9A-Fa-f]{2}$/.test(shard)) return null;
     if (typeof payload.v !== 'string') return null;
     return {
       pubkey: event.pubkey,
       createdAt: event.created_at,
       v: payload.v,
-      shard,
+      shard: shard.toUpperCase(),
       platform: typeof payload.platform === 'string' ? payload.platform.slice(0, 16) : 'unknown',
       network: typeof payload.network === 'string' ? payload.network.slice(0, 24) : 'unknown',
       charging: payload.charging === true,
@@ -101,8 +107,32 @@ export function parseHeartbeat(event: NostrEvent): ParsedHeartbeat | null {
         queueSize: Math.max(0, Number(payload.stats?.queueSize) || 0),
         published: Math.max(0, Number(payload.stats?.published) || 0),
       },
+      source: event.tags.find(([n]) => n === 'source')?.[1],
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Latest heartbeat per node pubkey. Kind 16919 is replaceable, but a multi-
+ * relay query can still return stale versions — collapse to the newest.
+ */
+export function dedupeHeartbeats(events: NostrEvent[]): ParsedHeartbeat[] {
+  const latest = new Map<string, ParsedHeartbeat>();
+  for (const event of events) {
+    const hb = parseHeartbeat(event);
+    if (!hb) continue;
+    const prev = latest.get(hb.pubkey);
+    if (!prev || hb.createdAt > prev.createdAt) latest.set(hb.pubkey, hb);
+  }
+  return [...latest.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/** True when the heartbeat is fresh enough to count the node as online. */
+export function isNodeLive(
+  hb: ParsedHeartbeat,
+  now = Math.floor(Date.now() / 1000),
+): boolean {
+  return now - hb.createdAt <= HEARTBEAT_TTL_S;
 }
