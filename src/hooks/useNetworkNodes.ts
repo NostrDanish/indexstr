@@ -14,6 +14,7 @@ import {
   dedupeHeartbeats,
   isNodeLive,
 } from '@/crawler/heartbeat';
+import { getIndexReadRelays } from '@/crawler/relays';
 
 export interface NetworkNodesResult {
   /** Distinct indexers with a heartbeat inside the TTL. */
@@ -37,7 +38,8 @@ export function useNetworkNodes(enabled = true) {
       // isNodeLive on the deduped latest-per-node heartbeat (replaceable
       // kind semantics can return stale versions from slow relays).
       const since = Math.floor(Date.now() / 1000) - HEARTBEAT_TTL_S * 2;
-      const events = await nostr.query(
+      // Read from the SIP-01 pool — heartbeats are published there.
+      const events = await nostr.group(getIndexReadRelays()).query(
         [{ kinds: [INDEXSTR_HEARTBEAT_KIND], since, limit: 500 }],
         { signal },
       );

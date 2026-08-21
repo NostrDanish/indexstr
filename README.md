@@ -219,21 +219,25 @@ Full schema documentation: [NIP.md](NIP.md) · Canonical spec: [SIP-01 v1.2](htt
 
 ### Relay Pool
 
-Observations are published to:
+Observations and heartbeats are pushed to every relay in the publish set — SIP-01 index relays first, then NIP-50 search relays, then broad-propagation relays:
 
+- `wss://relay-na1.metanomalist.com/`
+- `wss://test-sip-relay.sip-01test.workers.dev/` (SIP-01)
+- `wss://sip-relay-2.sip-booster-relay.workers.dev/` (SIP-01)
+- `wss://sip-relay-3.uncaged-sip.workers.dev/` (SIP-01)
+- `wss://sip-relay-4.sip-relay-4.workers.dev/` (SIP-01)
 - `wss://relay.nostr.band/` (NIP-50 search)
 - `wss://relay.ditto.pub/` (NIP-50 search)
 - `wss://relay.noswhere.com/` (NIP-50 search)
-- `wss://relay-na1.metanomalist.com/`
 - `wss://jskitty.cat/nostr`
 - `wss://relay.primal.net/`
 - `wss://relay.damus.io/`
 - `wss://nostr.hifish.org/`
-- `ws://acuy3mjnv26tkyaaucndlxmg2ocntz4rtebhavk57vgruozm42iaznqd.onion/` (Tor only — reachable from Tor Browser; clearnet browsers skip it)
+- `ws://acuy3mjnv26tkyaaucndlxmg2ocntz4rtebhavk57vgruozm42iaznqd.onion/` (Tor only — reachable from Tor Browser; clearnet browsers auto-skip it after repeated failures)
 
-(`wss://search.nos.today/` is read-only — "blocked: writes disabled" — so it is not in the publish set.)
+(`wss://search.nos.today/` is read-only — "blocked: writes disabled" — so it is read from but never published to.)
 
-Each observation is pushed to every relay in the set via targeted per-relay connections.
+**The pool is yours.** Settings → Index Relay Pool: add relays, hide defaults, reset. Auto-discovery scans public NIP-66 monitor data for relays advertising NIP-50 or kind 39697 and verifies each candidate's own NIP-11 document for the `uncaged_index` block before offering it. Changes apply on the next publish cycle — no restart. Per-relay health is tracked live; a relay that fails 8+ times with zero successes is skipped for the rest of the session.
 
 ---
 

@@ -246,18 +246,21 @@ The **event schema is identical**. The difference is only in how URLs are discov
 
 ## Relay Publishing
 
-Indexstr publishes to the same relay pool as the ecosystem:
+Indexstr pushes every observation and heartbeat to the full publish pool —
+SIP-01 index relays first, then NIP-50 search relays, then broad-propagation
+relays (`src/crawler/relays.ts`). The pool is user-editable in Settings
+(add / hide / reset, persisted per-device) and read dynamically per publish
+cycle. Relays that fail 8+ times with zero successes in a session are
+skipped automatically (auto-rotation).
 
-**Search relays (NIP-50):**
-- `wss://relay.nostr.band/`
-- `wss://relay.ditto.pub/`
-- `wss://search.nos.today/`
-- `wss://relay.noswhere.com/`
+**Relay auto-discovery:** candidates come from public NIP-66 monitor data
+(kind 30166 filtered by `N:50` / `k:39697`) and are verified against their
+own NIP-11 documents for `supported_nips: [50]` and the `uncaged_index`
+SIP-01 block (spec §15). Discovered relays are never joined silently — the
+user adds them.
 
-**Write relays (for propagation):**
-- `wss://relay.ditto.pub/`
-- `wss://relay.primal.net/`
-- `wss://relay.damus.io/`
+The read side (network intake, network estimates) queries the publish pool
+plus the NIP-50 search pool, including read-only `search.nos.today`.
 
 ## Reading the Index
 

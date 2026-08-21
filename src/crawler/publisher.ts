@@ -66,6 +66,18 @@ export function getRelayHealth(): Record<string, RelayHealth> {
   return Object.fromEntries(relayHealth);
 }
 
+/**
+ * Health gate: a relay that has failed 8+ times this session without a
+ * single success is skipped (auto-rotation — e.g. the .onion relay on a
+ * clearnet browser). One success instantly re-enables it.
+ */
+const RELAY_FAIL_GATE = 8;
+
+function isRelayGated(relayUrl: string): boolean {
+  const entry = relayHealth.get(relayUrl);
+  return entry !== undefined && entry.ok === 0 && entry.fail >= RELAY_FAIL_GATE;
+}
+
 /* ------------------------------------------------------------------------ */
 /* Publishing                                                                */
 /* ------------------------------------------------------------------------ */
@@ -75,7 +87,7 @@ export function getRelayHealth(): Record<string, RelayHealth> {
  * Returns the number of relays that accepted it.
  */
 async function publishToIndexRelays(signedEvent: NostrEvent): Promise<number> {
-  const relays = getIndexPublishRelays();
+  const relays = getIndexPublishRelays().filter((url) => !isRelayGated(url));
 
   if (!relayPublishFn) {
     console.debug('[Crawler] No relay publisher configured. Would publish to:', relays);

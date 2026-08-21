@@ -20,7 +20,6 @@ import {
   Check,
   Users,
   Send,
-  Radio,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -51,6 +50,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { IndexstrLogo } from '@/components/crawler/IndexstrLogo';
 import { CollectionsPanel } from '@/components/crawler/CollectionsPanel';
+import { RelayPoolManager } from '@/components/crawler/RelayPoolManager';
 import { useCrawler } from '@/hooks/useCrawler';
 import { useNetworkNodes } from '@/hooks/useNetworkNodes';
 import { cn } from '@/lib/utils';
@@ -658,9 +658,10 @@ export function CrawlerDashboard() {
 
                 <Separator />
 
-                {/* Relay health — observations are pushed to every relay in
-                    the publish set; this shows who is accepting them. */}
-                <RelayHealthList getRelayHealth={getRelayHealth} isRunning={isRunning} />
+                {/* Relay pool: membership + health + editing + discovery.
+                    Observations/heartbeats go to every relay in the pool;
+                    the crawler reads the pool dynamically per cycle. */}
+                <RelayPoolManager getRelayHealth={getRelayHealth} />
               </div>
 
               <Separator />
@@ -709,63 +710,4 @@ export function CrawlerDashboard() {
   );
 }
 
-/** Per-relay publish health, refreshed on a timer while the tab is open. */
-function RelayHealthList({
-  getRelayHealth,
-  isRunning,
-}: {
-  getRelayHealth: () => Record<string, { ok: number; fail: number; lastOk: number; lastError?: string }>;
-  isRunning: boolean;
-}) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const interval = setInterval(() => setTick((t) => t + 1), 5000);
-    return () => clearInterval(interval);
-  }, []);
 
-  const health = getRelayHealth();
-  const entries = Object.entries(health);
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <Radio className="h-4 w-4 text-muted-foreground" />
-        <div>
-          <p className="text-sm font-medium leading-none">Relay Health</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Observations are pushed to every relay; failures are retried from the outbox.
-          </p>
-        </div>
-      </div>
-      {entries.length === 0 ? (
-        <p className="text-xs text-muted-foreground pl-6">
-          {isRunning
-            ? 'Waiting for the first publish attempts…'
-            : 'No relay activity yet — start the crawler to publish.'}
-        </p>
-      ) : (
-        <div className="space-y-1 pl-6">
-          {entries.map(([url, h]) => (
-            <div key={url} className="flex items-center justify-between gap-2 text-xs">
-              <span className="font-mono text-muted-foreground truncate">
-                {url.replace(/^wss?:\/\//, '').replace(/\/$/, '')}
-              </span>
-              <span className="flex items-center gap-1.5 shrink-0">
-                {h.fail > 0 && h.lastOk < Date.now() - 60000 * 5 && h.ok === 0 ? (
-                  <span className="text-destructive">unreachable</span>
-                ) : h.fail > 0 ? (
-                  <span className="text-chart-4">flaky</span>
-                ) : (
-                  <span className="text-primary">ok</span>
-                )}
-                <span className="text-muted-foreground">
-                  {h.ok}✓ / {h.fail}✗
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}

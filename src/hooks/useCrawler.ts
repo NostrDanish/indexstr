@@ -6,6 +6,7 @@ import { useNostr } from '@nostrify/react';
 import type { NostrEvent } from '@nostrify/nostrify';
 import { CrawlerEngine, setEngineRelayPublisher, setNetworkQuerier } from '@/crawler/engine';
 import { setRelayPublisher, getIndexerInfo, type RelayHealth } from '@/crawler/publisher';
+import { getIndexReadRelays } from '@/crawler/relays';
 import { SIP01_KIND } from '@/crawler/webIndex';
 import { shardLabel } from '@/crawler/sharding';
 import type { NodeCapabilities } from '@/crawler/capabilities';
@@ -83,10 +84,11 @@ export function useCrawler() {
     setEngineRelayPublisher(publish);
 
     // Network discovery intake transport: recent SIP-01 observations from
-    // the relay pool become candidate crawl work (other indexers' findings
-    // are this node's discovery feed).
+    // the index relay pool become candidate crawl work (other indexers'
+    // findings are this node's discovery feed). Reads target the SIP-01
+    // pool — the user's general NIP-65 relays may never see these events.
     setNetworkQuerier(async (since, limit) => {
-      return nostr.query(
+      return nostr.group(getIndexReadRelays()).query(
         [{ kinds: [SIP01_KIND], since, limit }],
         { signal: AbortSignal.timeout(15000) },
       );
