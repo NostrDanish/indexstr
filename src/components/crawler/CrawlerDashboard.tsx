@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Play,
   Square,
@@ -50,7 +50,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { IndexstrLogo } from '@/components/crawler/IndexstrLogo';
 import { CollectionsPanel } from '@/components/crawler/CollectionsPanel';
-import { RelayPoolManager } from '@/components/crawler/RelayPoolManager';
+import { RelayManager } from '@/components/crawler/RelayManager';
 import { useCrawler } from '@/hooks/useCrawler';
 import { useNetworkNodes } from '@/hooks/useNetworkNodes';
 import { cn } from '@/lib/utils';
@@ -100,7 +100,6 @@ export function CrawlerDashboard() {
     clearAll,
     updateSettings,
     getSettings,
-    getRelayHealth,
   } = useCrawler();
 
   const network = useNetworkNodes(initialized);
@@ -658,10 +657,9 @@ export function CrawlerDashboard() {
 
                 <Separator />
 
-                {/* Relay pool: membership + health + editing + discovery.
-                    Observations/heartbeats go to every relay in the pool;
-                    the crawler reads the pool dynamically per cycle. */}
-                <RelayPoolManager getRelayHealth={getRelayHealth} />
+                {/* Relay pool: built-ins + user customs, NIP-11 probing,
+                    NIP-66 discovery. The crawler reads the pool per cycle. */}
+                <RelayManager />
               </div>
 
               <Separator />

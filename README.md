@@ -237,7 +237,7 @@ Observations and heartbeats are pushed to every relay in the publish set — SIP
 
 (`wss://search.nos.today/` is read-only — "blocked: writes disabled" — so it is read from but never published to.)
 
-**The pool is yours.** Settings → Index Relay Pool: add relays, hide defaults, reset. Auto-discovery scans public NIP-66 monitor data for relays advertising NIP-50 or kind 39697 and verifies each candidate's own NIP-11 document for the `uncaged_index` block before offering it. Changes apply on the next publish cycle — no restart. Per-relay health is tracked live; a relay that fails 8+ times with zero successes is skipped for the rest of the session.
+**The pool is yours.** Settings → Relay pool: add custom relays (persisted on this device, applied on the next publish cycle), probe any relay's live capabilities (NIP-11: latency, NIP-50, SIP-01 `uncaged_index`), or auto-discover new ones — public NIP-66 monitor data is scanned for relays advertising NIP-50 or kind 39697, then each candidate is verified against its own NIP-11 document before being offered. Built-ins can't be removed (they keep every node functional). Per-relay health is tracked during publishing; a relay that fails 8+ times with zero successes is skipped for the rest of the session.
 
 ---
 
