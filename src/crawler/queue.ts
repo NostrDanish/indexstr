@@ -15,7 +15,12 @@ interface CrawlerDB extends DBSchema {
   queue: {
     key: string;
     value: CrawlJob;
-    indexes: { 'by-priority': number; 'by-shard': number };
+    indexes: {
+      'by-priority': number;
+      'by-shard': number;
+      /** Compound: priority-ordered cursor WITHIN one shard (scheduler fix). */
+      'by-shard-priority': [number, number];
+    };
   };
   crawled: {
     key: string;
@@ -31,8 +36,9 @@ interface CrawlerDB extends DBSchema {
   };
 }
 
-/** Upper bound for held observations — a full outbox drops oldest-first logic
- *  in favor of simply not storing more (they can be re-crawled later). */
+/** Upper bound for held observations. On overflow the OLDEST entry is
+ *  dropped (newest wins): fresh observations are more valuable to the
+ *  index than stale ones, and a re-crawl can always reproduce the old. */
 export const OUTBOX_MAX = 5000;
 
 let db: IDBPDatabase<CrawlerDB> | null = null;
@@ -40,7 +46,7 @@ let db: IDBPDatabase<CrawlerDB> | null = null;
 export async function initDB(): Promise<IDBPDatabase<CrawlerDB>> {
   if (db) return db;
 
-  db = await openDB<CrawlerDB>('indexstr-crawler', 2, {
+  db = await openDB<CrawlerDB>('indexstr-crawler', 3, {
     upgrade(database, oldVersion, _newVersion, tx) {
       if (oldVersion < 1) {
         const queueStore = database.createObjectStore('queue', { keyPath: 'url' });
@@ -56,6 +62,12 @@ export async function initDB(): Promise<IDBPDatabase<CrawlerDB>> {
         }
         if (!database.objectStoreNames.contains('outbox')) {
           database.createObjectStore('outbox', { autoIncrement: true });
+        }
+      }
+      if (oldVersion < 3) {
+        const queueStore = tx.objectStore('queue');
+        if (!queueStore.indexNames.contains('by-shard-priority')) {
+          queueStore.createIndex('by-shard-priority', ['shard', 'priority']);
         }
       }
     },
@@ -120,19 +132,22 @@ export async function getNextJob(
 
   const tryIndex = async (useHome: boolean): Promise<CrawlJob | null> => {
     const tx = database.transaction('queue', 'readonly');
-    const index = tx.store.index(useHome ? 'by-shard' : 'by-priority');
-    const direction = useHome ? 'next' : 'prev';
 
     if (useHome && homeShard === undefined) return null;
 
-    // Home shard: iterate its jobs and keep the highest-priority ready one.
-    // Global pool: priority order already; take the first ready job.
-    let best: CrawlJob | null = null;
-    let deferred: CrawlJob | null = null; // ready but same-domain — fallback
+    // Home shard: compound [shard, priority] index walked descending, so the
+    // FIRST ready job found is the highest-priority one in the shard (the
+    // old by-shard scan of ≤500 unordered jobs could miss it entirely).
+    // Global pool: by-priority descending, same rule.
+    const index = tx.store.index(useHome ? 'by-shard-priority' : 'by-priority');
     let cursor = await index.openCursor(
-      useHome && homeShard !== undefined ? IDBKeyRange.only(homeShard) : null,
-      direction,
+      useHome && homeShard !== undefined
+        ? IDBKeyRange.bound([homeShard, -Infinity], [homeShard, Infinity])
+        : null,
+      'prev',
     );
+
+    let deferred: CrawlJob | null = null; // ready but same-domain — fallback
     let scanned = 0;
     while (cursor && scanned < 500) {
       scanned++;
@@ -140,17 +155,12 @@ export async function getNextJob(
       const ready = !job.nextAttempt || Date.now() >= job.nextAttempt;
       if (ready) {
         const sameDomain = avoidDomain !== undefined && jobDomain(job) === avoidDomain;
-        if (!useHome) {
-          if (!sameDomain) return job; // by-priority is already ordered
-          deferred ??= job;
-        } else if (!best || job.priority > best.priority) {
-          if (!sameDomain) best = job;
-          else deferred ??= job;
-        }
+        if (!sameDomain) return job; // indexes are already priority-ordered
+        deferred ??= job;
       }
       cursor = await cursor.continue();
     }
-    return best ?? deferred;
+    return deferred;
   };
 
   const wantHome =
@@ -262,7 +272,14 @@ export async function clearQueue(): Promise<void> {
 export async function enqueueOutbox(event: NostrEvent): Promise<void> {
   const database = await initDB();
   const count = await database.count('outbox');
-  if (count >= OUTBOX_MAX) return; // bound memory; re-crawl can reproduce it
+  if (count >= OUTBOX_MAX) {
+    // Newest-wins: drop the oldest held observation (auto-increment keys
+    // mean the first cursor entry is the oldest).
+    const tx = database.transaction('outbox', 'readwrite');
+    const oldest = await tx.store.openCursor();
+    if (oldest) await oldest.delete();
+    await tx.done;
+  }
   await database.add('outbox', { event, queuedAt: Date.now() });
 }
 

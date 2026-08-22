@@ -8,6 +8,13 @@
 // Strategy: try direct first (fast, no third party sees the request), then
 // fall back to a CORS proxy so the crawler actually works on real websites.
 // The proxy is honest about the trade-off — see PROXY_NOTE below.
+//
+// SSRF: private/loopback/link-local targets are refused entirely (ssrf.ts) —
+// never fetched directly AND never sent to the proxy (the proxy's network
+// can reach infrastructure the browser's cannot). Redirect targets are
+// re-checked on the final response URL.
+
+import { isPrivateHost, isPrivateUrl } from './ssrf';
 
 /** CORS proxy used when a direct cross-origin fetch is blocked. */
 export const CORS_PROXY_TEMPLATE = 'https://proxy.shakespeare.diy/?url={href}';
@@ -39,6 +46,14 @@ function proxyUrl(url: string): string {
   return CORS_PROXY_TEMPLATE.replace('{href}', encodeURIComponent(url));
 }
 
+/** Thrown when a fetch targets a private host — callers should not retry. */
+export class SsrRefusal extends Error {
+  constructor(url: string) {
+    super(`SSRF refusal: ${url}`);
+    this.name = 'SsrRefusal';
+  }
+}
+
 interface RawFetch {
   html: string;
   status: number;
@@ -66,6 +81,16 @@ async function attempt(
     });
 
     if (!response.ok) return null;
+
+    // Redirect → private target: discard. (For proxied requests response.url
+    // is the proxy itself; the pre-send host block is the guard there.)
+    if (response.redirected) {
+      try {
+        if (isPrivateHost(new URL(response.url).hostname)) return null;
+      } catch {
+        return null;
+      }
+    }
 
     const contentType = response.headers.get('content-type') ?? '';
 
@@ -98,6 +123,13 @@ export async function fetchPage(
   url: string,
   optionsOrMaxSizeKB: FetchOptions | number = {},
 ): Promise<FetchResult | null> {
+  // SSRF guard: refuse private/loopback/link-local targets before ANY
+  // request is issued — direct or proxied. The caller surfaces this as
+  // `ssrfBlocked` (distinguished from an ordinary fetch failure).
+  if (isPrivateUrl(url)) {
+    throw new SsrRefusal(url);
+  }
+
   const options: FetchOptions =
     typeof optionsOrMaxSizeKB === 'number'
       ? { maxSizeKB: optionsOrMaxSizeKB }

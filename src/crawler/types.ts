@@ -101,16 +101,27 @@ export interface CrawlerStats {
   homeShardJobs: number;
   /** URLs taken in from other indexers' network observations (this session). */
   networkIntake: number;
+  /** Intake URLs rejected (trap/duplicate/cap/invalid — Sybil telemetry). */
+  intakeRejected: number;
+  /** Refused before any request: private/loopback/link-local target (SSRF). */
+  ssrfBlocked: number;
+  /** Discovered URLs rejected by crawl-trap heuristics (this session). */
+  trapsBlocked: number;
 }
 
 export interface CrawlerSettings {
   wifiOnly: boolean;
   chargingOnly: boolean;
   respectRobots: boolean;
+  /** Session bandwidth cap — enforced in canCrawl(). */
   maxBandwidthMB: number;
+  /** Sliding-window global fetch budget — enforced in canCrawl(). */
   maxPagesPerHour: number;
+  /** Link-follow depth for manual seeds — enforced at enqueue. */
   maxDepth: number;
+  /** Serial by construction: the crawl loop processes one job at a time. */
   maxConcurrent: number;
+  /** Passed to the fetcher, checked pre- and post-download. */
   maxPageSizeKB: number;
   ecoMode: boolean;
 }

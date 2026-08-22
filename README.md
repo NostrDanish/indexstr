@@ -41,7 +41,9 @@ Indexstr = *"turn the community into a distributed indexing network."*
 - **Enrichment layer** — every crawled page is classified deterministically: topics (controlled vocabulary, evidence-weighted, ≤8 per page) ride SIP-01 `t` tags, document type rides the `type` extension. No AI required; any node replaying the algorithm reproduces the tags, so classification agreement is verifiable.
 - **Network discovery intake** — while running, a node reads *other* indexers' kind 39697 observations and queues URLs it has never seen. Every crawler on the network becomes every other node's discovery sensor.
 - **Freshness scheduling** — crawled URLs recrawl on adaptive intervals (24h → doubling → 30d cap; change resets). Unchanged recrawls republish the same `d`/`x` with fresh `created_at`: the network's "still alive" signal.
-- **Abuse guards** — crawl-trap heuristics, per-domain discovery caps, 150k queue ceiling, per-domain rate limits, robots.txt.
+- **Abuse guards** — crawl-trap heuristics, per-domain discovery caps, per-indexer intake caps (Sybil guard), 150k queue ceiling, per-domain rate limits, robots.txt.
+- **SSRF guard** — private/loopback/link-local/CGNAT/mapped-IPv6 targets are refused before any request, direct *or* proxied; redirect targets re-checked. The proxy is never asked to reach inward.
+- **Hard resource limits** — session bandwidth cap and a global pages/hour sliding window are actually enforced in the crawl loop (not just settings-page decoration), plus per-domain delays and a serial-by-design crawl loop.
 
 Full protocol details: [NIP.md](NIP.md).
 

@@ -53,6 +53,7 @@ import { CollectionsPanel } from '@/components/crawler/CollectionsPanel';
 import { RelayManager } from '@/components/crawler/RelayManager';
 import { useCrawler } from '@/hooks/useCrawler';
 import { useNetworkNodes } from '@/hooks/useNetworkNodes';
+import { exportIndexerNsec } from '@/crawler/indexerIdentity';
 import { cn } from '@/lib/utils';
 
 function formatBytes(bytes: number): string {
@@ -203,7 +204,7 @@ export function CrawlerDashboard() {
       </Card>
 
       {/* Why pages were skipped — otherwise "0 indexed" looks like a broken app */}
-      {(stats.skipped > 0 || stats.fetchFailed > 0) && (
+      {(stats.skipped > 0 || stats.fetchFailed > 0 || stats.intakeRejected > 0) && (
         <Card className="border-chart-4/40 bg-chart-4/5">
           <CardContent className="pt-6 space-y-3">
             <div className="flex items-center gap-2">
@@ -231,6 +232,24 @@ export function CrawlerDashboard() {
                 <div className="text-xs text-muted-foreground">duplicate content</div>
               </div>
             </div>
+
+            {/* Abuse-guard telemetry (only shown once the guards have fired) */}
+            {(stats.trapsBlocked > 0 || stats.ssrfBlocked > 0 || stats.intakeRejected > 0) && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm border-t border-chart-4/20 pt-3">
+                <div>
+                  <div className="font-bold">{stats.trapsBlocked.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">crawl traps rejected</div>
+                </div>
+                <div>
+                  <div className="font-bold">{stats.ssrfBlocked.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">private hosts refused</div>
+                </div>
+                <div>
+                  <div className="font-bold">{stats.intakeRejected.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">intake rejected (spam guards)</div>
+                </div>
+              </div>
+            )}
 
             {stats.robotsBlocked > 0 && stats.pagesIndexed === 0 && (
               <p className="text-xs text-muted-foreground">
@@ -664,6 +683,13 @@ export function CrawlerDashboard() {
 
               <Separator />
 
+              {/* Indexer identity export — deliberately frictionful: this
+                  nsec controls the node. Anyone holding it can publish as
+                  this node. */}
+              <IndexerIdentityExport />
+
+              <Separator />
+
               <div className="rounded-lg bg-muted/50 p-4 space-y-2">
                 <h4 className="font-medium text-sm flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-chart-4" />
@@ -704,6 +730,86 @@ export function CrawlerDashboard() {
           </Card>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/**
+ * Indexer identity export — the nsec that signs this node's observations.
+ * Deliberately frictionful (confirm dialog, reveal-once) per audit guidance:
+ * the secret lives in localStorage, so it should only surface on purpose.
+ */
+function IndexerIdentityExport() {
+  const [open, setOpen] = useState(false);
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const [copiedNsec, setCopiedNsec] = useState(false);
+
+  const handleConfirm = () => {
+    setRevealed(exportIndexerNsec());
+  };
+
+  const handleClose = () => {
+    setOpen(false);
+    setRevealed(null); // never linger in UI state
+    setCopiedNsec(false);
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2 min-w-0">
+        <Key className="h-4 w-4 text-muted-foreground shrink-0" />
+        <div>
+          <p className="text-sm font-medium leading-none">Node identity</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Per-device anonymous keypair. Export to migrate this node to another browser.
+          </p>
+        </div>
+      </div>
+
+      <AlertDialog open={open} onOpenChange={(v) => (v ? setOpen(true) : handleClose())}>
+        <AlertDialogTrigger asChild>
+          <Button variant="outline" size="sm" className="shrink-0">Export</Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Export node identity?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This nsec controls your Indexstr node identity. Anyone holding it can publish
+              observations as your node. Never paste it into websites, chats, or screenshots.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {revealed && (
+            <div className="space-y-2">
+              <div className="rounded-md bg-muted p-3 font-mono text-xs break-all select-all">
+                {revealed}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => {
+                  navigator.clipboard.writeText(revealed);
+                  setCopiedNsec(true);
+                  setTimeout(() => setCopiedNsec(false), 2000);
+                }}
+              >
+                {copiedNsec ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
+                {copiedNsec ? 'Copied' : 'Copy nsec'}
+              </Button>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleClose}>Close</AlertDialogCancel>
+            {!revealed && (
+              <AlertDialogAction onClick={handleConfirm}>
+                Reveal my node key
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

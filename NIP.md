@@ -200,8 +200,16 @@ Abuse guards on all discovered/intake URLs (never on curated collections):
 - crawl-trap filter (session keys, param explosions, segment loops,
   counter paths, extreme depth — see `traps.ts`)
 - per-domain caps (200/domain intake, 500/domain link discovery)
+- **per-indexer cap** (100 URLs per indexer pubkey per session) — the Sybil
+  guard: a flooding pubkey can't turn listening nodes into its crawl army,
+  even spread across thousands of domains
+- structural sanity: `d` must be `widx:`-shaped, `u` present, event age ≤ 24h
+- SSRF guard: private/loopback/link-local/CGNAT/mapped-IPv6 targets are
+  refused before any request (direct or proxied); redirect targets re-checked
 - 150k total queue ceiling
 - own-pubkey exclusion
+
+Intake rejections are counted (`intakeRejected` stat) as network telemetry.
 
 ## Freshness / Recrawl Semantics
 

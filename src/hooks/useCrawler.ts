@@ -35,6 +35,9 @@ export function useCrawler() {
     discovered: 0,
     homeShardJobs: 0,
     networkIntake: 0,
+    intakeRejected: 0,
+    ssrfBlocked: 0,
+    trapsBlocked: 0,
   });
   const [recentCrawls, setRecentCrawls] = useState<Array<{
     url: string;

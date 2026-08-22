@@ -6,12 +6,12 @@
 // (kind 16919) announce presence, and observations that can't reach any
 // relay wait in the IndexedDB outbox instead of being lost.
 
-import { fetchPage } from './fetcher';
+import { fetchPage, SsrRefusal } from './fetcher';
 import { parsePage } from './parser';
 import { normalizeIndexUrl, SIP01_KIND } from './webIndex';
 import { hashContent } from './hasher';
 import { shouldCrawlUrl, getCrawlDelay } from './robots';
-import { canMakeRequest } from './limits';
+import { canMakeRequest, pagesPerHourExceeded, recordFetchAttempt } from './limits';
 import {
   publishIndexObservation,
   flushObservationOutbox,
@@ -25,7 +25,7 @@ import { getNodeCapabilities, type NodeCapabilities } from './capabilities';
 import { getIndexPublishRelays } from './relays';
 import { enrichPage } from './enrich';
 import { nextFreshness } from './freshness';
-import { isLikelyCrawlTrap, DomainIntakeGuard } from './traps';
+import { isLikelyCrawlTrap, DomainIntakeGuard, IndexerIntakeGuard } from './traps';
 import {
   initDB,
   addToQueue,
@@ -56,6 +56,10 @@ const NETWORK_INTAKE_INTERVAL_MS = 120_000;
 /** Per-domain caps for discovered/intake URLs (collections are exempt). */
 const DISCOVERY_DOMAIN_CAP = 500;
 const INTAKE_DOMAIN_CAP = 200;
+
+/** Per-indexer intake cap (Sybil guard — one flooding pubkey can't turn
+ *  every node into its crawl army even across thousands of domains). */
+const INTAKE_INDEXER_CAP = 100;
 
 /**
  * Queries recent kind 39697 events from the relay pool; injected by the
@@ -120,6 +124,9 @@ export class CrawlerEngine {
     discovered: 0,
     homeShardJobs: 0,
     networkIntake: 0,
+    intakeRejected: 0,
+    ssrfBlocked: 0,
+    trapsBlocked: 0,
   };
   private abortController: AbortController | null = null;
   private onStatsChange?: (stats: CrawlerStats) => void;
@@ -134,6 +141,8 @@ export class CrawlerEngine {
   /** Per-domain intake guards (session-scoped; collections bypass them). */
   private discoveryGuard = new DomainIntakeGuard(DISCOVERY_DOMAIN_CAP);
   private intakeGuard = new DomainIntakeGuard(INTAKE_DOMAIN_CAP);
+  /** Per-indexer Sybil guard for network intake (session-scoped). */
+  private indexerGuard = new IndexerIntakeGuard(INTAKE_INDEXER_CAP);
   /** Domain of the previously crawled job — for fair scheduling. */
   private lastDomain = '';
 
@@ -277,22 +286,50 @@ export class CrawlerEngine {
       const events = await networkQueryFn(since, 250);
       const ownPubkey = getIndexerIdentity().pubkeyHex;
       const crawled = await getCrawledUrlSet();
+      const nowS = Math.floor(Date.now() / 1000);
 
       let newest = this.lastIntakeTs;
       let accepted = 0;
+      let rejected = 0;
 
       for (const event of events) {
         if (event.pubkey === ownPubkey) continue;
-        if (event.kind !== SIP01_KIND) continue;
         if (event.created_at > newest) newest = event.created_at;
 
+        // Structural sanity: right kind, widx: d-tag, u tag, not ancient.
+        if (event.kind !== SIP01_KIND) continue;
+        const d = event.tags.find(([name]) => name === 'd')?.[1];
         const rawUrl = event.tags.find(([name]) => name === 'u')?.[1];
-        if (!rawUrl) continue;
+        if (!d?.startsWith('widx:') || !rawUrl) {
+          rejected++;
+          continue;
+        }
+        if (event.created_at < nowS - 86400 || event.created_at > nowS + 3600) {
+          rejected++;
+          continue;
+        }
+
+        // Sybil guard: cap per-indexer contribution per session.
+        if (!this.indexerGuard.allow(event.pubkey)) {
+          rejected++;
+          continue;
+        }
+
         const normalized = normalizeIndexUrl(rawUrl);
-        if (!normalized) continue;
-        if (crawled.has(normalized)) continue;
-        if (isLikelyCrawlTrap(normalized)) continue;
-        if (!this.intakeGuard.allow(normalized)) continue;
+        if (!normalized) {
+          rejected++;
+          continue;
+        }
+        if (crawled.has(normalized)) continue; // duplicates aren't rejection news
+        if (isLikelyCrawlTrap(normalized)) {
+          rejected++;
+          this.stats.trapsBlocked++;
+          continue;
+        }
+        if (!this.intakeGuard.allow(normalized)) {
+          rejected++;
+          continue;
+        }
         if (await isQueued(normalized)) continue;
 
         await addToQueue({
@@ -308,8 +345,9 @@ export class CrawlerEngine {
       }
 
       this.lastIntakeTs = Math.max(newest, Math.floor(Date.now() / 1000) - 600);
-      if (accepted > 0) {
+      if (accepted > 0 || rejected > 0) {
         this.stats.networkIntake += accepted;
+        this.stats.intakeRejected += rejected;
         this.stats.queueSize = await getQueueSize();
         this.stats.homeShardJobs = await getQueueShardCount(this.homeShard);
         this.emitStats();
@@ -456,8 +494,21 @@ export class CrawlerEngine {
       }
     }
 
-    // Fetch page
-    const result = await fetchPage(job.url, this.settings.maxPageSizeKB);
+    // Fetch page (SSRF refusal = permanent rejection, never retried)
+    recordFetchAttempt();
+    let result;
+    try {
+      result = await fetchPage(job.url, this.settings.maxPageSizeKB);
+    } catch (error) {
+      if (error instanceof SsrRefusal) {
+        console.debug('[Crawler] SSRF refusal:', job.url);
+        await removeFromQueue(job.url);
+        this.stats.skipped++;
+        this.stats.ssrfBlocked++;
+        return;
+      }
+      throw error;
+    }
     if (!result) {
       this.stats.errors++;
       this.stats.fetchFailed++;
@@ -568,7 +619,10 @@ export class CrawlerEngine {
         if (normalized === job.url) continue;
 
         // Trap + domain guards: discovery must not explode the queue.
-        if (isLikelyCrawlTrap(normalized)) continue;
+        if (isLikelyCrawlTrap(normalized)) {
+          this.stats.trapsBlocked++;
+          continue;
+        }
         if (!this.discoveryGuard.allow(normalized)) continue;
 
         await addToQueue({
@@ -616,6 +670,12 @@ export class CrawlerEngine {
 
     // Check bandwidth limit
     if (this.stats.bandwidthUsed > this.settings.maxBandwidthMB * 1024 * 1024) {
+      return false;
+    }
+
+    // Global pages/hour budget (sliding window, session-scoped). The audit
+    // guarantee: Indexstr can never silently out-crawl its configuration.
+    if (pagesPerHourExceeded(this.settings.maxPagesPerHour)) {
       return false;
     }
 

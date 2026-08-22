@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { isLikelyCrawlTrap, DomainIntakeGuard } from './traps';
+import { isLikelyCrawlTrap, DomainIntakeGuard, IndexerIntakeGuard } from './traps';
 
 describe('isLikelyCrawlTrap', () => {
   test('normal pages pass', () => {
@@ -53,5 +53,33 @@ describe('DomainIntakeGuard', () => {
     expect(guard.allow('https://example.com/d')).toBe(false);
     // Other domains are unaffected
     expect(guard.allow('https://other.com/a')).toBe(true);
+  });
+});
+
+describe('IndexerIntakeGuard (Sybil cap)', () => {
+  test('caps one flooding pubkey without touching others', () => {
+    const guard = new IndexerIntakeGuard(3);
+    const flood = 'aa'.repeat(32);
+    const honest = 'bb'.repeat(32);
+
+    expect(guard.allow(flood)).toBe(true);
+    expect(guard.allow(flood)).toBe(true);
+    expect(guard.allow(flood)).toBe(true);
+    expect(guard.allow(flood)).toBe(false); // capped
+
+    expect(guard.allow(honest)).toBe(true);
+    expect(guard.indexerCount).toBe(2);
+  });
+
+  test('a 10k-domain × N-url flood still hits the indexer cap', () => {
+    const guard = new IndexerIntakeGuard(100);
+    const attacker = 'cc'.repeat(32);
+    let accepted = 0;
+    for (let d = 0; d < 10_000; d++) {
+      for (let u = 0; u < 200; u++) {
+        if (guard.allow(attacker)) accepted++;
+      }
+    }
+    expect(accepted).toBe(100); // two million candidate URLs → 100 accepted
   });
 });

@@ -85,3 +85,35 @@ export class DomainIntakeGuard {
     return true;
   }
 }
+
+/**
+ * Per-indexer Sybil guard for network intake.
+ *
+ * Anyone can publish kind 39697 events, so a single flooding indexer could
+ * otherwise turn every listening node into its free crawl army: 10k domains
+ * × 200 URLs each sails under the per-domain cap. This guard caps how many
+ * intake URLs one indexer pubkey may contribute per session. Honest bursts
+ * (a crawler publishing its day's work) fit comfortably; a flood does not.
+ *
+ * Deliberately NOT a reputation system — no scoring, no memory beyond the
+ * session, no central list. Reputation belongs to the search side, derived
+ * from observation agreement.
+ */
+export class IndexerIntakeGuard {
+  private counts = new Map<string, number>();
+
+  constructor(private readonly maxPerIndexer: number) {}
+
+  /** True when this indexer may still contribute intake URLs. */
+  allow(pubkey: string): boolean {
+    const count = this.counts.get(pubkey) ?? 0;
+    if (count >= this.maxPerIndexer) return false;
+    this.counts.set(pubkey, count + 1);
+    return true;
+  }
+
+  /** How many distinct indexers have contributed this session. */
+  get indexerCount(): number {
+    return this.counts.size;
+  }
+}
