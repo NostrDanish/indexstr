@@ -26,6 +26,7 @@ import { getIndexPublishRelays } from './relays';
 import { enrichPage } from './enrich';
 import { nextFreshness } from './freshness';
 import { isLikelyCrawlTrap, DomainIntakeGuard, IndexerIntakeGuard } from './traps';
+import { isPrivateUrl } from './ssrf';
 import {
   initDB,
   addToQueue,
@@ -309,28 +310,43 @@ export class CrawlerEngine {
           continue;
         }
 
-        // Sybil guard: cap per-indexer contribution per session.
-        if (!this.indexerGuard.allow(event.pubkey)) {
-          rejected++;
-          continue;
-        }
-
         const normalized = normalizeIndexUrl(rawUrl);
         if (!normalized) {
           rejected++;
           continue;
         }
+        // SSRF queue-admission check: a network observation must never put a
+        // private/loopback/link-local URL into the queue (the crawl loop
+        // refuses them too, but don't admit them in the first place).
+        if (isPrivateUrl(normalized)) {
+          rejected++;
+          this.stats.ssrfBlocked++;
+          continue;
+        }
+
+        // Dedup BEFORE charging any intake budget: replayed or already-known
+        // URLs must not burn the per-indexer / per-domain caps — otherwise an
+        // attacker rebroadcasting a victim indexer's valid signed events
+        // exhausts the victim's session budget (griefing).
         if (crawled.has(normalized)) continue; // duplicates aren't rejection news
+        if (await isQueued(normalized)) continue;
+
         if (isLikelyCrawlTrap(normalized)) {
           rejected++;
           this.stats.trapsBlocked++;
+          continue;
+        }
+
+        // Sybil guard: cap per-indexer contribution per session. Only URLs
+        // that will actually be queued consume budget.
+        if (!this.indexerGuard.allow(event.pubkey)) {
+          rejected++;
           continue;
         }
         if (!this.intakeGuard.allow(normalized)) {
           rejected++;
           continue;
         }
-        if (await isQueued(normalized)) continue;
 
         await addToQueue({
           url: normalized,
@@ -373,6 +389,7 @@ export class CrawlerEngine {
   async seedUrl(url: string, priority = 1.0): Promise<void> {
     const normalizedUrl = normalizeIndexUrl(url);
     if (!normalizedUrl) return;
+    if (isPrivateUrl(normalizedUrl)) return; // SSRF queue-admission check
     await addToQueue({
       url: normalizedUrl,
       priority,
@@ -471,6 +488,19 @@ export class CrawlerEngine {
 
   private async crawlUrl(job: CrawlJob): Promise<void> {
     const now = Date.now();
+
+    // SSRF guard FIRST — before robots.txt or any other request is issued.
+    // A queued URL must never cause a request (direct OR via the CORS proxy)
+    // to a private/loopback/link-local host. Defense in depth: fetchPage and
+    // robots.ts refuse private hosts too, but those run only after the
+    // robots fetch — ordering here is the actual fix.
+    if (isPrivateUrl(job.url)) {
+      console.debug('[Crawler] SSRF refusal:', job.url);
+      await removeFromQueue(job.url);
+      this.stats.skipped++;
+      this.stats.ssrfBlocked++;
+      return;
+    }
 
     // Freshness gate: a crawled URL is only re-crawled once its recrawl
     // interval has elapsed. (Recrawl jobs carry nextAttempt = due time, so
@@ -577,7 +607,7 @@ export class CrawlerEngine {
     else this.stats.viaDirect++;
     this.stats.queueSize = await getQueueSize();
 
-    // Publish SIP-01 v1.1 observation to the shared index (kind 39697).
+    // Publish SIP-01 v1.2 observation to the shared index (kind 39697).
     // Canonical spec: https://github.com/NostrDanish/SIP-01
     // Recrawls republish even when unchanged: same d/x, fresh created_at —
     // the network's "still alive" signal. When no relay accepts it, the

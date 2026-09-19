@@ -5,6 +5,7 @@
 // "failed open" — claiming to respect robots.txt while ignoring it entirely.
 
 import { CORS_PROXY_TEMPLATE } from './fetcher';
+import { isPrivateHost } from './ssrf';
 
 const robotsCache = new Map<string, { rules: RobotsRules; fetchedAt: number }>();
 const CACHE_TTL = 3600000; // 1 hour
@@ -17,6 +18,11 @@ interface RobotsRules {
 export async function shouldCrawlUrl(url: string): Promise<boolean> {
   try {
     const urlObj = new URL(url);
+    // SSRF defense in depth: NEVER fetch robots.txt from a private host —
+    // directly or via the CORS proxy — regardless of caller ordering. A
+    // robots lookup for a private host is treated as a refusal, not
+    // "allowed".
+    if (isPrivateHost(urlObj.hostname)) return false;
     const robotsUrl = `${urlObj.protocol}//${urlObj.host}/robots.txt`;
 
     let rules = await getRobotsRules(robotsUrl);
@@ -37,6 +43,8 @@ export async function shouldCrawlUrl(url: string): Promise<boolean> {
 export async function getCrawlDelay(url: string): Promise<number> {
   try {
     const urlObj = new URL(url);
+    // SSRF defense in depth: no robots fetch for private hosts (see above).
+    if (isPrivateHost(urlObj.hostname)) return 0;
     const robotsUrl = `${urlObj.protocol}//${urlObj.host}/robots.txt`;
     const rules = await getRobotsRules(robotsUrl);
     return rules?.crawlDelay ?? 0;

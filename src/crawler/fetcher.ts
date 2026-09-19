@@ -12,7 +12,14 @@
 // SSRF: private/loopback/link-local targets are refused entirely (ssrf.ts) —
 // never fetched directly AND never sent to the proxy (the proxy's network
 // can reach infrastructure the browser's cannot). Redirect targets are
-// re-checked on the final response URL.
+// re-checked on the final response URL of the DIRECT path.
+//
+// KNOWN LIMITATION: on the proxied path the proxy follows redirects
+// server-side and response.url is the proxy itself, so a public page that
+// redirects to a private target cannot be re-validated from here. The
+// pre-send host block (now covering IPv4-mapped/NAT64/6to4/Teredo forms)
+// is the guard for that path; closing the residual gap requires a proxy
+// that validates redirect targets itself.
 
 import { isPrivateHost, isPrivateUrl } from './ssrf';
 
@@ -82,8 +89,9 @@ async function attempt(
 
     if (!response.ok) return null;
 
-    // Redirect → private target: discard. (For proxied requests response.url
-    // is the proxy itself; the pre-send host block is the guard there.)
+    // Redirect → private target: discard. This re-validation covers the
+    // DIRECT path; on the proxied path response.url is the proxy itself and
+    // server-side redirects are opaque to us (see header KNOWN LIMITATION).
     if (response.redirected) {
       try {
         if (isPrivateHost(new URL(response.url).hostname)) return null;
